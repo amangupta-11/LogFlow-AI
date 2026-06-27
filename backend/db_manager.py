@@ -136,6 +136,9 @@ def get_connection():
     
     # SQLite path
     db_path = os.getenv("SQLITE_DB_PATH", "jobs.db")
+    if os.getenv("VERCEL"):
+        db_path = "/tmp/jobs.db"
+
     if db_path == ":memory:":
         if _memory_conn is None:
             _memory_conn = sqlite3.connect(":memory:")
@@ -148,8 +151,11 @@ def get_connection():
     
     conn = sqlite3.connect(db_path, timeout=30.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute("PRAGMA synchronous=NORMAL;")
+    try:
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
+    except Exception as e:
+        print(f"Could not configure SQLite PRAGMAs: {e}")
     return conn, False
 
 
@@ -744,13 +750,19 @@ def get_repo_connection():
             print("psycopg2 not found, falling back to SQLite for repository.")
 
     db_path = os.getenv("REPO_DB_PATH", "validated_logs.db")
+    if os.getenv("VERCEL"):
+        db_path = "/tmp/validated_logs.db"
+
     if not os.path.isabs(db_path):
         base_dir = os.path.dirname(os.path.abspath(__file__))
         db_path = os.path.join(base_dir, db_path)
     conn = sqlite3.connect(db_path, timeout=30.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute("PRAGMA synchronous=NORMAL;")
+    try:
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
+    except Exception as e:
+        print(f"Could not configure repository SQLite PRAGMAs: {e}")
     return conn
 
 

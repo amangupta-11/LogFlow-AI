@@ -12,12 +12,22 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-DB_DIR = os.path.join(os.path.dirname(__file__), "db")
+import tempfile
+
+if os.getenv("VERCEL"):
+    DB_DIR = os.path.join(tempfile.gettempdir(), "db")
+else:
+    DB_DIR = os.path.join(os.path.dirname(__file__), "db")
+
 METADATA_FILE = os.path.join(DB_DIR, "logs_metadata.json")
 EMBEDDINGS_FILE = os.path.join(DB_DIR, "logs_embeddings.npy")
 
 # Ensure db directory exists
-os.makedirs(DB_DIR, exist_ok=True)
+try:
+    os.makedirs(DB_DIR, exist_ok=True)
+except Exception as e:
+    logger.warning(f"Could not create vector store directory {DB_DIR}: {e}")
+
 
 def get_embedding(text: str) -> list:
     """

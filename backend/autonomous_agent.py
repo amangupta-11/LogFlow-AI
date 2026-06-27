@@ -6,13 +6,17 @@ import traceback
 from datetime import datetime, timedelta
 
 # Configure logging
+handlers = [logging.StreamHandler(sys.stdout)]
+if not os.getenv("VERCEL"):
+    try:
+        handlers.append(logging.FileHandler("autonomous_agent.log", encoding="utf-8"))
+    except Exception as e:
+        print(f"Could not configure file logging: {e}")
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler("autonomous_agent.log", encoding="utf-8")
-    ]
+    handlers=handlers
 )
 logger = logging.getLogger("AutonomousAgent")
 

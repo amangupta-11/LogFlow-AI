@@ -260,9 +260,21 @@ async def update_settings(req: SettingsRequest):
 
 @app.on_event("startup")
 async def startup_event():
-    db_manager.init_db()
-    db_manager.init_repo_db()
-    batch_processor.resume_unfinished_jobs()
+    try:
+        db_manager.init_db()
+    except Exception as e:
+        logger.error(f"Failed to initialize main database on startup: {e}")
+        
+    try:
+        db_manager.init_repo_db()
+    except Exception as e:
+        logger.error(f"Failed to initialize repository database on startup: {e}")
+        
+    try:
+        batch_processor.resume_unfinished_jobs()
+    except Exception as e:
+        logger.error(f"Failed to resume unfinished jobs on startup: {e}")
+
 
 @app.post("/api/upload-batch")
 async def upload_batch(file: UploadFile = File(...), background_tasks: BackgroundTasks = None):

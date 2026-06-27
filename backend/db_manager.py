@@ -597,7 +597,44 @@ def _migrate_repo_db_internal(cursor, conn, is_postgres):
         """)
     conn.commit()
     
-    # 7. Migrate agent_runtime_metrics columns
+    # 7. Create agent_runtime_metrics table if not exists
+    if is_postgres:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS agent_runtime_metrics (
+                id SERIAL PRIMARY KEY,
+                timestamp VARCHAR(100),
+                technologies_processed INTEGER,
+                urls_crawled INTEGER,
+                logs_extracted INTEGER,
+                logs_validated INTEGER,
+                logs_inserted INTEGER,
+                failures INTEGER,
+                urls_skipped INTEGER DEFAULT 0,
+                pages_log_rich INTEGER DEFAULT 0,
+                pages_low_value INTEGER DEFAULT 0,
+                insert_yield_pct REAL DEFAULT 0.0
+            )
+        """)
+    else:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS agent_runtime_metrics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT,
+                technologies_processed INTEGER,
+                urls_crawled INTEGER,
+                logs_extracted INTEGER,
+                logs_validated INTEGER,
+                logs_inserted INTEGER,
+                failures INTEGER,
+                urls_skipped INTEGER DEFAULT 0,
+                pages_log_rich INTEGER DEFAULT 0,
+                pages_low_value INTEGER DEFAULT 0,
+                insert_yield_pct REAL DEFAULT 0.0
+            )
+        """)
+    conn.commit()
+
+    # 7b. Migrate agent_runtime_metrics columns
     metrics_migrations = [
         ("urls_skipped", "INTEGER DEFAULT 0"),
         ("pages_log_rich", "INTEGER DEFAULT 0"),
@@ -929,6 +966,22 @@ def _init_repo_db_internal(conn):
                     component VARCHAR(255),
                     status VARCHAR(50),
                     details TEXT
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS agent_runtime_metrics (
+                    id SERIAL PRIMARY KEY,
+                    timestamp VARCHAR(100),
+                    technologies_processed INTEGER,
+                    urls_crawled INTEGER,
+                    logs_extracted INTEGER,
+                    logs_validated INTEGER,
+                    logs_inserted INTEGER,
+                    failures INTEGER,
+                    urls_skipped INTEGER DEFAULT 0,
+                    pages_log_rich INTEGER DEFAULT 0,
+                    pages_low_value INTEGER DEFAULT 0,
+                    insert_yield_pct REAL DEFAULT 0.0
                 )
             """)
         else:

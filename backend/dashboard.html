@@ -1,0 +1,1342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Autonomous Agent Ingestion Dashboard</title>
+    <!-- Import Outfit font from Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: hsl(222, 25%, 10%);
+            --card-bg: hsla(222, 25%, 15%, 0.7);
+            --border-color: hsla(222, 20%, 25%, 0.5);
+            --text-main: hsl(222, 15%, 90%);
+            --text-muted: hsl(222, 10%, 65%);
+            
+            --accent-primary: hsl(190, 90%, 50%); /* Neon cyan */
+            --accent-success: hsl(145, 80%, 45%); /* Emerald green */
+            --accent-warning: hsl(35, 90%, 55%);  /* Amber orange */
+            --accent-error: hsl(355, 85%, 55%);   /* Coral red */
+            
+            --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        html, body {
+            overflow-x: hidden;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            background-image: 
+                radial-gradient(at 0% 0%, hsla(190, 80%, 30%, 0.15) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, hsla(145, 80%, 30%, 0.1) 0px, transparent 50%);
+            background-attachment: fixed;
+            color: var(--text-main);
+            font-family: 'Outfit', sans-serif;
+            min-height: 100vh;
+            padding: clamp(1rem, 2.5vw, 2.5rem);
+            line-height: 1.5;
+        }
+
+        .container {
+            width: 95%;
+            max-width: 1600px;
+            margin: 0 auto;
+            display: grid;
+            gap: clamp(1rem, 2vw, 2rem);
+        }
+
+        /* 2K and 4K optimizations */
+        @media (min-width: 2000px) {
+            :root {
+                font-size: 18px;
+            }
+            .container {
+                max-width: 1920px;
+            }
+        }
+
+        @media (min-width: 3000px) {
+            :root {
+                font-size: 22px;
+            }
+            .container {
+                max-width: 2560px;
+            }
+        }
+
+        /* Glassmorphism Header */
+        header {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: clamp(1rem, 1.5vw, 1.5rem) clamp(1.5rem, 2vw, 2rem);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            backdrop-filter: blur(12px);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+
+        .header-title h1 {
+            font-size: clamp(1.4rem, 2.5vw, 1.8rem);
+            font-weight: 800;
+            letter-spacing: -0.5px;
+            background: linear-gradient(135deg, #fff, var(--accent-primary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .header-title p {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            margin-top: 0.25rem;
+        }
+
+        /* Status Indicator */
+        .status-badge {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            background: hsla(222, 20%, 8%, 0.6);
+            border: 1px solid var(--border-color);
+            padding: 0.5rem 1rem;
+            border-radius: 99px;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background-color: var(--text-muted);
+            box-shadow: 0 0 10px var(--text-muted);
+        }
+
+        .status-dot.active {
+            background-color: var(--accent-success);
+            box-shadow: 0 0 12px var(--accent-success);
+            animation: pulse 1.8s infinite;
+        }
+        
+        .status-dot.paused {
+            background-color: var(--accent-warning);
+            box-shadow: 0 0 12px var(--accent-warning);
+        }
+
+        /* Grid Layouts */
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: clamp(1rem, 1.5vw, 1.5rem);
+        }
+
+        @media (max-width: 1400px) {
+            .dashboard-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        @media (max-width: 768px) {
+            .dashboard-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .dashboard-main-section {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: clamp(1.5rem, 2vw, 2rem);
+        }
+
+        @media (max-width: 1200px) {
+            .dashboard-main-section {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Cards styling */
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: clamp(1rem, 1.5vw, 1.5rem);
+            backdrop-filter: blur(10px);
+            box-shadow: 0 4px 24px 0 rgba(0, 0, 0, 0.2);
+            transition: var(--transition-smooth);
+        }
+
+        .card:hover {
+            border-color: hsla(190, 80%, 50%, 0.3);
+            transform: translateY(-2px);
+        }
+
+        .stat-card {
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            min-height: 120px;
+            height: auto;
+        }
+
+        .stat-label {
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .stat-value {
+            font-size: clamp(1.8rem, 2.5vw, 2.2rem);
+            font-weight: 800;
+            color: #fff;
+            margin-top: 0.5rem;
+            word-break: break-all;
+        }
+
+        .stat-footer {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            margin-top: 0.25rem;
+        }
+
+        .stat-footer span {
+            color: var(--accent-primary);
+            font-weight: 600;
+        }
+
+        /* Controls Section */
+        .controls-card {
+            grid-column: span 2;
+            min-height: 120px;
+            height: auto;
+            display: flex;
+            flex-direction: row;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-around;
+            gap: 0.8rem;
+            padding: 1rem;
+        }
+
+        @media (max-width: 1400px) {
+            .controls-card {
+                grid-column: span 2 !important;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .controls-card {
+                grid-column: span 1 !important;
+            }
+        }
+
+        .controls-title {
+            font-size: 1.1rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 0.5rem;
+        }
+
+        .btn {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            cursor: pointer;
+            border: 1px solid transparent;
+            transition: var(--transition-smooth);
+            text-decoration: none;
+            flex: 1 1 auto;
+            min-width: 120px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent-primary), hsl(190, 80%, 40%));
+            color: var(--bg-color);
+        }
+
+        .btn-primary:hover {
+            box-shadow: 0 0 15px hsla(190, 90%, 50%, 0.4);
+            transform: scale(1.02);
+        }
+
+        .btn-secondary {
+            background: transparent;
+            border-color: var(--border-color);
+            color: var(--text-main);
+        }
+
+        .btn-secondary:hover {
+            background: hsla(222, 20%, 25%, 0.3);
+            border-color: var(--accent-primary);
+        }
+
+        .btn-danger {
+            background: hsla(355, 80%, 20%, 0.4);
+            border-color: var(--accent-error);
+            color: var(--accent-error);
+        }
+
+        .btn-danger:hover {
+            background: var(--accent-error);
+            color: #fff;
+            box-shadow: 0 0 15px hsla(355, 85%, 55%, 0.3);
+        }
+
+        .btn-success {
+            background: hsla(145, 75%, 15%, 0.4);
+            border-color: var(--accent-success);
+            color: var(--accent-success);
+        }
+
+        .btn-success:hover {
+            background: var(--accent-success);
+            color: #fff;
+            box-shadow: 0 0 15px hsla(145, 80%, 45%, 0.3);
+        }
+
+        /* Cycle & Scheduler Section Grid */
+        .cycle-scheduler-grid {
+            display: grid;
+            grid-template-columns: 3fr 2fr;
+            gap: clamp(1rem, 1.5vw, 1.5rem);
+        }
+
+        @media (max-width: 1200px) {
+            .cycle-scheduler-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .cycle-metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 0.8rem 1.5rem;
+            font-size: 0.9rem;
+        }
+
+        /* Activity Feed */
+        .feed-container {
+            height: 380px;
+            overflow-y: auto;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            padding-right: 0.5rem;
+        }
+
+        .feed-item {
+            padding: 0.6rem 0.8rem;
+            border-radius: 6px;
+            margin-bottom: 0.5rem;
+            background: rgba(0, 0, 0, 0.2);
+            border-left: 3px solid var(--border-color);
+            display: grid;
+            grid-template-columns: 80px 100px 1fr;
+            gap: 0.75rem;
+            animation: fadeIn 0.4s ease;
+        }
+
+        .feed-item.error { border-left-color: var(--accent-error); background: hsla(355, 80%, 15%, 0.1); }
+        .feed-item.job_start { border-left-color: var(--accent-primary); }
+        .feed-item.job_end { border-left-color: var(--accent-success); }
+        .feed-item.logs_inserted { border-left-color: var(--accent-success); }
+        .feed-item.logs_validated { border-left-color: hsl(280, 80%, 65%); }
+        .feed-item.page_classified { border-left-color: var(--accent-warning); }
+
+        .feed-time {
+            color: var(--text-muted);
+        }
+
+        .feed-tag {
+            font-weight: 700;
+            text-transform: uppercase;
+            font-size: 0.75rem;
+            padding: 1px 4px;
+            border-radius: 4px;
+            text-align: center;
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .feed-msg {
+            word-break: break-all;
+        }
+
+        /* Tables style */
+        .table-title {
+            font-size: 1.2rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+            color: #fff;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .table-container {
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            width: 100%;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9rem;
+            text-align: left;
+            table-layout: fixed; /* Keep columns constrained to let truncation work */
+        }
+
+        th, td {
+            padding: 0.75rem clamp(0.5rem, 1.2vw, 1rem);
+            border-bottom: 1px solid var(--border-color);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        th {
+            background-color: hsla(222, 25%, 8%, 0.8);
+            color: var(--text-muted);
+            font-weight: 600;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        tr td {
+            transition: background-color 0.2s ease;
+        }
+
+        tr:hover td {
+            background-color: rgba(255, 255, 255, 0.02);
+        }
+
+        .table-cell-multiline {
+            white-space: normal !important;
+        }
+        .table-cell-multiline strong,
+        .table-cell-multiline div {
+            display: block;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            width: 100%;
+        }
+
+        /* Badge status */
+        .badge {
+            display: inline-block;
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .badge-excellent { background-color: hsla(145, 80%, 45%, 0.2); color: var(--accent-success); }
+        .badge-good { background-color: hsla(190, 80%, 50%, 0.2); color: var(--accent-primary); }
+        .badge-partial { background-color: hsla(35, 90%, 55%, 0.2); color: var(--accent-warning); }
+        .badge-weak { background-color: hsla(355, 85%, 55%, 0.15); color: var(--accent-error); }
+        .badge-none { background-color: rgba(255, 255, 255, 0.08); color: var(--text-muted); }
+        
+        /* Phase Status Badges */
+        .badge-searching { background-color: hsla(190, 90%, 50%, 0.2); color: var(--accent-primary); }
+        .badge-crawling { background-color: hsla(210, 80%, 55%, 0.2); color: hsl(210, 80%, 65%); }
+        .badge-extracting { background-color: hsla(280, 80%, 65%, 0.2); color: hsl(280, 80%, 75%); }
+        .badge-validating { background-color: hsla(320, 85%, 60%, 0.2); color: hsl(320, 85%, 70%); }
+        .badge-saving { background-color: hsla(145, 80%, 45%, 0.2); color: var(--accent-success); }
+        .badge-idle { background-color: rgba(255, 255, 255, 0.08); color: var(--text-muted); }
+
+        /* Scrollbar customizing */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: var(--border-color);
+            border-radius: 99px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--text-muted);
+        }
+
+        /* Animations */
+        @keyframes pulse {
+            0% { transform: scale(1); opacity: 0.8; }
+            50% { transform: scale(1.15); opacity: 1; box-shadow: 0 0 15px var(--accent-success); }
+            100% { transform: scale(1); opacity: 0.8; }
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(4px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Notification Center styles */
+        .notification-card {
+            margin-top: 1rem;
+        }
+
+        .filter-buttons {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .filter-btn {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border-color);
+            color: var(--text-muted);
+            padding: 0.35rem 0.75rem;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: var(--transition-smooth);
+        }
+
+        .filter-btn:hover {
+            border-color: var(--accent-primary);
+            color: #fff;
+        }
+
+        .filter-btn.active {
+            background: linear-gradient(135deg, var(--accent-primary), hsl(190, 80%, 40%));
+            color: var(--bg-color);
+            border-color: var(--accent-primary);
+        }
+
+        .severity-badge {
+            font-weight: 700;
+            text-transform: uppercase;
+            font-size: 0.75rem;
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+        .severity-info { background: rgba(0, 180, 216, 0.2); color: var(--accent-primary); }
+        .severity-warning { background: rgba(251, 133, 0, 0.2); color: var(--accent-warning); }
+        .severity-error { background: rgba(208, 0, 0, 0.2); color: var(--accent-error); }
+        .severity-critical { background: rgba(208, 0, 0, 0.4); color: #ff4d6d; font-weight: 800; animation: critical-pulse 2s infinite; }
+
+        .delivery-status {
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+        .status-Pending { color: var(--text-muted); }
+        .status-Sent { color: var(--accent-success); }
+        .status-Failed { color: var(--accent-error); }
+        .status-Retrying { color: var(--accent-warning); }
+        .status-Throttled { color: hsl(280, 80%, 65%); }
+
+        @keyframes critical-pulse {
+            0% { box-shadow: 0 0 0 0 rgba(255, 77, 109, 0.4); }
+            70% { box-shadow: 0 0 0 6px rgba(255, 77, 109, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(255, 77, 109, 0); }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        
+        <!-- Header -->
+        <header>
+            <div class="header-title">
+                <h1>Autonomous Agent Ingestion Dashboard</h1>
+                <p>Real-time crawler intelligence and ingestion metrics feed</p>
+            </div>
+            <div class="status-badge">
+                <div class="status-dot" id="agent-dot"></div>
+                <span id="agent-status-text">DISCONNECTED</span>
+            </div>
+        </header>
+
+        <!-- Stats Grid (Row 1) -->
+        <div class="dashboard-grid">
+            <div class="card stat-card">
+                <div class="stat-label">Repository Logs</div>
+                <div class="stat-value" id="repo-log-count">0</div>
+                <div class="stat-footer">Tracked: <span id="techs-tracked">0</span> techs</div>
+            </div>
+            <div class="card stat-card">
+                <div class="stat-label">Coverage Yield</div>
+                <div class="stat-value" id="techs-with-logs">0</div>
+                <div class="stat-footer">Empty: <span id="techs-without-logs">0</span> techs</div>
+            </div>
+            <div class="card stat-card">
+                <div class="stat-label">Crawled Today</div>
+                <div class="stat-value" id="urls-crawled-today">0</div>
+                <div class="stat-footer">Skipped today: <span id="urls-skipped-today">0</span></div>
+            </div>
+            <div class="card stat-card">
+                <div class="stat-label">Insert Yield</div>
+                <div class="stat-value" id="insert-yield-pct">0%</div>
+                <div class="stat-footer">Skipped dups: <span id="duplicates-skipped">0</span></div>
+            </div>
+        </div>
+
+        <!-- Secondary Stats & Controls Grid -->
+        <div class="dashboard-grid">
+            <div class="card stat-card">
+                <div class="stat-label">Logs Extracted Today</div>
+                <div class="stat-value" id="logs-extracted-today">0</div>
+                <div class="stat-footer">Log-rich pages: <span id="pages-log-rich">0</span></div>
+            </div>
+            <div class="card stat-card">
+                <div class="stat-label">Logs Inserted Today</div>
+                <div class="stat-value" id="logs-inserted-today">0</div>
+                <div class="stat-footer">Low-value pages: <span id="pages-low-value">0</span></div>
+            </div>
+            
+            <!-- Controls Card -->
+            <div class="card controls-card">
+                <button class="btn btn-primary" onclick="triggerAction('run_discovery')" id="btn-discovery">Run Discovery Now</button>
+                <button class="btn btn-secondary" onclick="triggerAction('run_health_check')" id="btn-health">Run Health Check</button>
+                <button class="btn btn-danger" onclick="triggerAction('pause')" id="btn-pause">Pause Agent</button>
+                <button class="btn btn-success" onclick="triggerAction('resume')" id="btn-resume" style="display:none;">Resume Agent</button>
+            </div>
+        </div>
+
+        <!-- Agent Monitoring Row (Row 3) -->
+        <div class="dashboard-grid">
+            <!-- Agent Status -->
+            <div class="card stat-card">
+                <div class="stat-label">Agent Status</div>
+                <div class="stat-value" id="mon-agent-status" style="font-size: 1.8rem; text-transform: uppercase;">Idle</div>
+                <div class="stat-footer" style="display: flex; align-items: center; gap: 0.5rem;">
+                    <div class="status-dot" id="mon-status-dot" style="margin-top: 0.1rem;"></div>
+                    <span id="mon-status-text" style="font-size: 0.75rem; text-transform: uppercase;">Idle</span>
+                </div>
+            </div>
+            <!-- Current Job -->
+            <div class="card stat-card">
+                <div class="stat-label">Current Job</div>
+                <div class="stat-value" id="mon-current-job" style="font-size: 1.4rem; text-transform: capitalize; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">—</div>
+                <div class="stat-footer" id="mon-job-footer">No active job</div>
+            </div>
+            <!-- Current Technology -->
+            <div class="card stat-card">
+                <div class="stat-label">Current Technology</div>
+                <div class="stat-value" id="mon-current-tech" style="font-size: 1.8rem; font-weight: 800; color: var(--accent-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">—</div>
+                <div class="stat-footer" id="mon-tech-footer">Target source</div>
+            </div>
+            <!-- Discovery Progress -->
+            <div class="card stat-card" style="height: auto; min-height: 120px; justify-content: flex-start; gap: 0.5rem;">
+                <div class="stat-label">Discovery Progress</div>
+                <div style="display: flex; flex-direction: column; gap: 0.4rem; font-size: 0.85rem; width: 100%; margin-top: 0.2rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span style="color: var(--text-muted);">Technologies:</span>
+                        <span id="prog-techs" style="font-family: 'JetBrains Mono', monospace; font-weight: bold; color: #fff;">0 / 0</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span style="color: var(--text-muted);">Queries:</span>
+                        <span id="prog-queries" style="font-family: 'JetBrains Mono', monospace; font-weight: bold; color: #fff;">0 / 0</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span style="color: var(--text-muted);">URLs:</span>
+                        <span id="prog-urls" style="font-family: 'JetBrains Mono', monospace; font-weight: bold; color: #fff;">0 / 0</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Detailed Scheduler & Cycle Section (Row 4) -->
+        <div class="cycle-scheduler-grid">
+            <!-- Current Cycle -->
+            <div class="card" style="display: flex; flex-direction: column; gap: 1rem;">
+                <div class="table-title" style="margin-bottom: 0.5rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem;">
+                    <span>Current Ingestion Cycle</span>
+                </div>
+                <div class="cycle-metrics-grid">
+                    <div style="display: flex; justify-content: space-between;">
+                        <span style="color: var(--text-muted);">Current Phase:</span>
+                        <span id="cycle-phase" class="badge badge-none" style="font-weight: bold;">Idle</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between;">
+                        <span style="color: var(--text-muted);">Start Time:</span>
+                        <span id="cycle-start-time" style="color: #fff; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem;">Never</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between;">
+                        <span style="color: var(--text-muted);">Current Runtime:</span>
+                        <span id="cycle-runtime" style="color: var(--accent-primary); font-family: 'JetBrains Mono', monospace; font-weight: bold;">—</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between;">
+                        <span style="color: var(--text-muted);">URLs Crawled:</span>
+                        <span id="cycle-urls-crawled" style="color: #fff; font-weight: bold;">0</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between;">
+                        <span style="color: var(--text-muted);">Pages Classified:</span>
+                        <span id="cycle-pages-classified" style="color: #fff; font-weight: bold;">0</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between;">
+                        <span style="color: var(--text-muted);">Logs Extracted:</span>
+                        <span id="cycle-logs-extracted" style="color: #fff; font-weight: bold;">0</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between;">
+                        <span style="color: var(--text-muted);">Logs Validated:</span>
+                        <span id="cycle-logs-validated" style="color: #fff; font-weight: bold;">0</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between;">
+                        <span style="color: var(--text-muted);">Logs Inserted:</span>
+                        <span id="cycle-logs-inserted" style="color: var(--accent-success); font-weight: bold;">0</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between;">
+                        <span style="color: var(--text-muted);">Duplicate Logs Skipped:</span>
+                        <span id="cycle-duplicates-skipped" style="color: var(--accent-warning); font-weight: bold;">0</span>
+                    </div>
+                </div>
+            </div>
+            <!-- Next Scheduled Jobs -->
+            <div class="card" style="display: flex; flex-direction: column; gap: 1rem;">
+                <div class="table-title" style="margin-bottom: 0.5rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem;">
+                    <span>Next Scheduled Jobs</span>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 0.8rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span style="color: var(--text-muted); font-size: 0.9rem;">Technology Discovery</span>
+                        <span id="sched-tech" style="font-family: 'JetBrains Mono', monospace; font-weight: bold; font-size: 0.95rem; color: var(--accent-primary);">—</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span style="color: var(--text-muted); font-size: 0.9rem;">Log Discovery</span>
+                        <span id="sched-log" style="font-family: 'JetBrains Mono', monospace; font-weight: bold; font-size: 0.95rem; color: var(--accent-primary);">—</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span style="color: var(--text-muted); font-size: 0.9rem;">Repository Health Check</span>
+                        <span id="sched-health" style="font-family: 'JetBrains Mono', monospace; font-weight: bold; font-size: 0.95rem; color: var(--accent-primary);">—</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span style="color: var(--text-muted); font-size: 0.9rem;">Daily Summary Report</span>
+                        <span id="sched-report" style="font-family: 'JetBrains Mono', monospace; font-weight: bold; font-size: 0.95rem; color: var(--accent-primary);">—</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main section (Activity Feed & tables) -->
+        <div class="dashboard-main-section">
+            
+            <!-- Left Side: Progress & Performance Tables -->
+            <div style="display: flex; flex-direction: column; gap: 2rem;">
+                <!-- Technology Progress -->
+                <div class="card">
+                    <div class="table-title">
+                        <span>Technology Progress</span>
+                    </div>
+                    <div class="table-container">
+                        <table>
+                            <colgroup>
+                                <col style="width: 25%">
+                                <col style="width: 25%">
+                                <col style="width: 20%">
+                                <col style="width: 30%">
+                            </colgroup>
+                            <thead>
+                                <tr>
+                                    <th>Technology</th>
+                                    <th>Coverage Status</th>
+                                    <th>Repository Logs</th>
+                                    <th>Last Discovery Date</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tech-progress-tbody">
+                                <tr>
+                                    <td colspan="4" style="text-align: center; color: var(--text-muted);">Loading progress catalog...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Domain Yield Performance -->
+                <div class="card">
+                    <div class="table-title">
+                        <span>Domain Ingestion Performance</span>
+                    </div>
+                    <div class="table-container">
+                        <table>
+                            <colgroup>
+                                <col style="width: 40%">
+                                <col style="width: 20%">
+                                <col style="width: 20%">
+                                <col style="width: 20%">
+                            </colgroup>
+                            <thead>
+                                <tr>
+                                    <th>Domain</th>
+                                    <th>URLs Crawled</th>
+                                    <th>Logs Validated</th>
+                                    <th>Yield Rate</th>
+                                </tr>
+                            </thead>
+                            <tbody id="domain-perf-tbody">
+                                <tr>
+                                    <td colspan="4" style="text-align: center; color: var(--text-muted);">Loading domain performance table...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Side: Real-time Event Feed -->
+            <div class="card" style="height: fit-content; display: flex; flex-direction: column;">
+                <div class="table-title">
+                    <span>Live Event Logs</span>
+                    <span style="font-size: 0.75rem; color: var(--accent-success); font-family: 'JetBrains Mono', monospace;" id="websocket-status">CONNECTING...</span>
+                </div>
+                <div class="feed-container" id="feed-container">
+                    <!-- Events will insert here dynamically -->
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Notification Center Card -->
+        <div class="card notification-card">
+            <div class="table-title">
+                <span>Notification Center</span>
+                <div class="filter-buttons">
+                    <button class="filter-btn active" onclick="setNotificationFilter('ALL')">ALL</button>
+                    <button class="filter-btn" onclick="setNotificationFilter('INFO')">INFO</button>
+                    <button class="filter-btn" onclick="setNotificationFilter('WARNING')">WARNING</button>
+                    <button class="filter-btn" onclick="setNotificationFilter('ERROR')">ERROR</button>
+                    <button class="filter-btn" onclick="setNotificationFilter('CRITICAL')">CRITICAL</button>
+                </div>
+            </div>
+            <div class="table-container" style="max-height: 480px;">
+                <table>
+                    <colgroup>
+                        <col style="width: 12%">
+                        <col style="width: 18%">
+                        <col style="width: 40%">
+                        <col style="width: 12%">
+                        <col style="width: 18%">
+                    </colgroup>
+                    <thead>
+                        <tr>
+                            <th>Severity</th>
+                            <th>Event Type</th>
+                            <th>Subject</th>
+                            <th>Delivery Status</th>
+                            <th>Timestamp</th>
+                        </tr>
+                    </thead>
+                    <tbody id="notifications-tbody">
+                        <tr>
+                            <td colspan="5" style="text-align: center; color: var(--text-muted);">Loading notifications...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // Set up Websocket connection for real-time events
+        let ws;
+        function connectWebSocket() {
+            const loc = window.location;
+            const wsProto = loc.protocol === "https:" ? "wss:" : "ws:";
+            const wsUrl = `${wsProto}//${loc.host}/api/agent-events/ws`;
+            
+            console.log("Connecting WebSocket to", wsUrl);
+            ws = new WebSocket(wsUrl);
+            
+            ws.onopen = () => {
+                document.getElementById("websocket-status").textContent = "LIVE";
+                document.getElementById("websocket-status").style.color = "var(--accent-success)";
+            };
+            
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    appendFeedItem(data);
+                } catch (e) {
+                    console.error("Failed to parse websocket message:", e);
+                }
+            };
+            
+            ws.onclose = () => {
+                document.getElementById("websocket-status").textContent = "DISCONNECTED";
+                document.getElementById("websocket-status").style.color = "var(--accent-error)";
+                // Reconnect loop
+                setTimeout(connectWebSocket, 3000);
+            };
+            
+            ws.onerror = (err) => {
+                console.error("WebSocket error:", err);
+            };
+        }
+
+        // Formatting timestamps
+        function formatTimestamp(isoStr) {
+            if (!isoStr) return "";
+            try {
+                const date = new Date(isoStr);
+                return date.toLocaleTimeString([], { hour12: false });
+            } catch (e) {
+                return isoStr;
+            }
+        }
+
+        // Add a line to the activity feed
+        function appendFeedItem(data) {
+            const container = document.getElementById("feed-container");
+            const item = document.createElement("div");
+            item.className = `feed-item ${data.event_type || ''}`;
+            
+            // Format log fields
+            const timeStr = formatTimestamp(data.timestamp);
+            const tagStr = data.event_type ? data.event_type.replace('_', ' ') : 'EVENT';
+            const msgStr = data.message || '';
+            
+            item.innerHTML = `
+                <div class="feed-time">${timeStr}</div>
+                <div class="feed-tag">${tagStr}</div>
+                <div class="feed-msg">${msgStr}</div>
+            `;
+            
+            container.insertBefore(item, container.firstChild);
+            
+            // Keep container capped at 100 rows
+            while (container.children.length > 100) {
+                container.removeChild(container.lastChild);
+            }
+        }
+
+        let nextRunTimes = {
+            tech: null,
+            log: null,
+            health: null,
+            report: null
+        };
+
+        function updateCountdowns() {
+            const now = new Date();
+            const jobs = [
+                { id: "sched-tech", time: nextRunTimes.tech },
+                { id: "sched-log", time: nextRunTimes.log },
+                { id: "sched-health", time: nextRunTimes.health },
+                { id: "sched-report", time: nextRunTimes.report }
+            ];
+            
+            jobs.forEach(job => {
+                const el = document.getElementById(job.id);
+                if (!el) return;
+                if (!job.time) {
+                    el.textContent = "—";
+                    el.style.color = "var(--text-muted)";
+                    return;
+                }
+                
+                const nextDate = new Date(job.time);
+                const diffMs = nextDate - now;
+                
+                if (diffMs <= 0) {
+                    el.textContent = "Pending / Running";
+                    el.style.color = "var(--accent-success)";
+                } else {
+                    const diffSecs = Math.floor(diffMs / 1000);
+                    const hours = Math.floor(diffSecs / 3600);
+                    const minutes = Math.floor((diffSecs % 3600) / 60);
+                    const seconds = diffSecs % 60;
+                    
+                    let timeStr = "";
+                    if (hours > 0) timeStr += `${hours}h `;
+                    if (minutes > 0 || hours > 0) timeStr += `${minutes}m `;
+                    timeStr += `${seconds}s`;
+                    
+                    el.textContent = timeStr;
+                    el.style.color = "var(--accent-primary)";
+                }
+            });
+        }
+
+        let cycleStartTime = null;
+
+        function updateCycleRuntime() {
+            const el = document.getElementById("cycle-runtime");
+            if (!el) return;
+            if (!cycleStartTime) {
+                el.textContent = "—";
+                return;
+            }
+            
+            const start = new Date(cycleStartTime);
+            const now = new Date();
+            const diffMs = now - start;
+            if (diffMs < 0) {
+                el.textContent = "0s";
+                return;
+            }
+            
+            const diffSecs = Math.floor(diffMs / 1000);
+            const hours = Math.floor(diffSecs / 3600);
+            const minutes = Math.floor((diffSecs % 3600) / 60);
+            const seconds = diffSecs % 60;
+            
+            let timeStr = "";
+            if (hours > 0) timeStr += `${hours}h `;
+            if (minutes > 0 || hours > 0) timeStr += `${minutes}m `;
+            timeStr += `${seconds}s`;
+            
+            el.textContent = timeStr;
+        }
+
+        // Refresh stats JSON
+        async function refreshStats() {
+            try {
+                const resp = await fetch("/api/dashboard/stats");
+                const data = await resp.json();
+                
+                // Set indicators
+                document.getElementById("repo-log-count").textContent = data.repository_log_count;
+                document.getElementById("techs-tracked").textContent = data.technologies_tracked;
+                document.getElementById("techs-with-logs").textContent = data.technologies_with_logs;
+                document.getElementById("techs-without-logs").textContent = data.technologies_without_logs;
+                
+                document.getElementById("urls-crawled-today").textContent = data.urls_crawled_today;
+                document.getElementById("urls-skipped-today").textContent = data.urls_skipped_today || 0;
+                document.getElementById("insert-yield-pct").textContent = `${data.insert_yield_pct}%`;
+                document.getElementById("duplicates-skipped").textContent = data.duplicates_skipped;
+                
+                document.getElementById("logs-extracted-today").textContent = data.logs_extracted_today;
+                document.getElementById("logs-inserted-today").textContent = data.logs_inserted_today;
+                
+                // Track pages log-rich vs low-value if returned
+                if (data.pages_log_rich !== undefined) {
+                    document.getElementById("pages-log-rich").textContent = data.pages_log_rich;
+                }
+                if (data.pages_low_value !== undefined) {
+                    document.getElementById("pages-low-value").textContent = data.pages_low_value;
+                }
+                
+                // Update agent status UI header badge
+                const status = data.agent_status || "idle";
+                const dot = document.getElementById("agent-dot");
+                const text = document.getElementById("agent-status-text");
+                const btnPause = document.getElementById("btn-pause");
+                const btnResume = document.getElementById("btn-resume");
+                
+                text.textContent = status.toUpperCase();
+                dot.className = "status-dot";
+                
+                if (status === "running") {
+                    dot.classList.add("active");
+                    text.textContent = `RUNNING (${data.current_job || 'JOB'})` + (data.current_tech ? ` - ${data.current_tech}` : '');
+                    btnPause.style.display = "block";
+                    btnResume.style.display = "none";
+                } else if (status === "paused") {
+                    dot.classList.add("paused");
+                    btnPause.style.display = "none";
+                    btnResume.style.display = "block";
+                } else {
+                    btnPause.style.display = "block";
+                    btnResume.style.display = "none";
+                }
+
+                // Update Detailed Ingest Progress Widgets
+                document.getElementById("mon-agent-status").textContent = status;
+                
+                const monDot = document.getElementById("mon-status-dot");
+                const monText = document.getElementById("mon-status-text");
+                if (monDot && monText) {
+                    monDot.className = "status-dot";
+                    monText.textContent = status;
+                    if (status === "running") {
+                        monDot.classList.add("active");
+                    } else if (status === "paused") {
+                        monDot.classList.add("paused");
+                    }
+                }
+
+                const currentJob = data.current_job;
+                const jobVal = currentJob ? currentJob.replace('_', ' ') : '—';
+                const jobEl = document.getElementById("mon-current-job");
+                jobEl.textContent = jobVal;
+                jobEl.title = jobVal;
+                document.getElementById("mon-job-footer").textContent = currentJob ? "Active process" : "No active job";
+
+                const currentTech = data.current_tech || '—';
+                const techEl = document.getElementById("mon-current-tech");
+                techEl.textContent = currentTech;
+                techEl.title = currentTech;
+                document.getElementById("mon-tech-footer").textContent = data.current_tech ? "Discovery target" : "No active target";
+
+                const techProc = data.technologies_processed || 0;
+                const techTotal = data.technologies_total || 0;
+                document.getElementById("prog-techs").textContent = `${techProc} / ${techTotal}`;
+                
+                const queryCur = data.current_query || 0;
+                const queryTotal = data.total_queries || 0;
+                document.getElementById("prog-queries").textContent = `${queryCur} / ${queryTotal}`;
+                
+                const urlCur = data.current_url || 0;
+                const urlTotal = data.total_urls || 0;
+                document.getElementById("prog-urls").textContent = `${urlCur} / ${urlTotal}`;
+
+                // Update Cycle Information
+                const phaseEl = document.getElementById("cycle-phase");
+                if (phaseEl) {
+                    const phase = data.current_phase || "Idle";
+                    phaseEl.textContent = phase;
+                    phaseEl.className = "badge";
+                    
+                    const phaseLower = phase.toLowerCase();
+                    if (phaseLower === "searching") phaseEl.classList.add("badge-searching");
+                    else if (phaseLower === "crawling") phaseEl.classList.add("badge-crawling");
+                    else if (phaseLower === "extracting") phaseEl.classList.add("badge-extracting");
+                    else if (phaseLower === "validating") phaseEl.classList.add("badge-validating");
+                    else if (phaseLower === "saving") phaseEl.classList.add("badge-saving");
+                    else phaseEl.classList.add("badge-idle");
+                }
+                
+                const startVal = data.cycle_start_time;
+                if (startVal) {
+                    const startDate = new Date(startVal);
+                    document.getElementById("cycle-start-time").textContent = startDate.toLocaleTimeString([], { hour12: false });
+                    cycleStartTime = startVal;
+                } else {
+                    document.getElementById("cycle-start-time").textContent = "Never";
+                    cycleStartTime = null;
+                }
+                
+                document.getElementById("cycle-urls-crawled").textContent = data.cycle_urls_crawled || 0;
+                document.getElementById("cycle-pages-classified").textContent = data.cycle_pages_classified || 0;
+                document.getElementById("cycle-logs-extracted").textContent = data.cycle_logs_extracted || 0;
+                document.getElementById("cycle-logs-validated").textContent = data.cycle_logs_validated || 0;
+                document.getElementById("cycle-logs-inserted").textContent = data.cycle_logs_inserted || 0;
+                document.getElementById("cycle-duplicates-skipped").textContent = data.cycle_duplicates_skipped || 0;
+
+                // Update Next Scheduled Jobs count timers
+                nextRunTimes.tech = data.next_technology_discovery;
+                nextRunTimes.log = data.next_log_discovery;
+                nextRunTimes.health = data.next_health_check;
+                nextRunTimes.report = data.next_daily_report;
+                updateCountdowns();
+                updateCycleRuntime();
+
+            } catch (e) {
+                console.error("Failed to fetch stats:", e);
+            }
+        }
+
+        // Refresh technology progress table
+        async function refreshTechnologies() {
+            try {
+                const resp = await fetch("/api/dashboard/technologies");
+                const data = await resp.json();
+                
+                const tbody = document.getElementById("tech-progress-tbody");
+                tbody.innerHTML = "";
+                
+                if (data.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: var(--text-muted);">No technologies tracked yet.</td></tr>`;
+                    return;
+                }
+                
+                data.forEach(item => {
+                    const tr = document.createElement("tr");
+                    const statusStr = item.status ? item.status.toLowerCase() : "none";
+                    
+                    let badgeClass = "badge-none";
+                    if (statusStr === "excellent") badgeClass = "badge-excellent";
+                    else if (statusStr === "good") badgeClass = "badge-good";
+                    else if (statusStr === "partial") badgeClass = "badge-partial";
+                    else if (statusStr === "weak") badgeClass = "badge-weak";
+                    
+                    const dateStr = item.last_discovery_date ? item.last_discovery_date.split("Z")[0].replace("T", " ") : "Never";
+                    
+                    tr.innerHTML = `
+                        <td title="${item.technology}"><strong>${item.technology}</strong></td>
+                        <td><span class="badge ${badgeClass}">${statusStr.toUpperCase()}</span></td>
+                        <td>${item.repository_logs}</td>
+                        <td style="font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: var(--text-muted);" title="${dateStr}">${dateStr}</td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            } catch (e) {
+                console.error("Failed to fetch technology list:", e);
+            }
+        }
+
+        // Refresh domains yield table
+        async function refreshDomains() {
+            try {
+                const resp = await fetch("/api/dashboard/domains");
+                const data = await resp.json();
+                
+                const tbody = document.getElementById("domain-perf-tbody");
+                tbody.innerHTML = "";
+                
+                if (data.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: var(--text-muted);">No domains crawled yet.</td></tr>`;
+                    return;
+                }
+                
+                data.forEach(item => {
+                    const tr = document.createElement("tr");
+                    
+                    let yieldClass = "color: var(--text-muted);";
+                    if (item.yield_percent >= 50) yieldClass = "color: var(--accent-success); font-weight: 600;";
+                    else if (item.yield_percent > 0) yieldClass = "color: var(--accent-primary);";
+                    else if (item.urls_crawled >= 20 && item.logs_validated === 0) yieldClass = "color: var(--accent-error); text-decoration: line-through;";
+                    
+                    tr.innerHTML = `
+                        <td title="${item.domain}">${item.domain}</td>
+                        <td>${item.urls_crawled}</td>
+                        <td>${item.logs_validated}</td>
+                        <td style="${yieldClass}">${item.yield_percent}%</td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            } catch (e) {
+                console.error("Failed to fetch domains:", e);
+            }
+        }
+
+        // Send a control command to backend
+        async function triggerAction(action) {
+            try {
+                const resp = await fetch("/api/dashboard/control", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({ action: action })
+                });
+                const result = await resp.json();
+                console.log(`Action '${action}' response:`, result);
+                refreshStats();
+            } catch (e) {
+                console.error(`Failed to trigger action '${action}':`, e);
+            }
+        }
+
+        let currentNotificationFilter = 'ALL';
+        
+        function setNotificationFilter(severity) {
+            currentNotificationFilter = severity;
+            
+            // Update button active state
+            const buttons = document.querySelectorAll(".filter-btn");
+            buttons.forEach(btn => {
+                if (btn.textContent === severity) {
+                    btn.classList.add("active");
+                } else {
+                    btn.classList.remove("active");
+                }
+            });
+            
+            refreshNotifications();
+        }
+
+        async function refreshNotifications() {
+            try {
+                let url = "/api/dashboard/notifications";
+                if (currentNotificationFilter !== 'ALL') {
+                    url += `?severity=${currentNotificationFilter}`;
+                }
+                
+                const resp = await fetch(url);
+                const data = await resp.json();
+                
+                const tbody = document.getElementById("notifications-tbody");
+                tbody.innerHTML = "";
+                
+                if (data.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--text-muted);">No notifications found for severity '${currentNotificationFilter}'.</td></tr>`;
+                    return;
+                }
+                
+                data.forEach(item => {
+                    const tr = document.createElement("tr");
+                    
+                    const severityLower = item.severity.toLowerCase();
+                    const statusClass = `status-${item.status}`;
+                    
+                    // Format timestamp cleanly
+                    const date = new Date(item.timestamp);
+                    const dateStr = date.toLocaleString();
+                    
+                    if (severityLower === 'critical') {
+                        tr.style.background = "rgba(255, 77, 109, 0.04)";
+                    } else if (severityLower === 'error') {
+                        tr.style.background = "rgba(208, 0, 0, 0.02)";
+                    }
+                    
+                    const tooltipText = `${item.subject}${item.error_message ? ' - ' + item.error_message : ''}`;
+                    
+                    tr.innerHTML = `
+                        <td><span class="severity-badge severity-${severityLower}">${item.severity}</span></td>
+                        <td title="${item.notification_type}"><code style="font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; background: rgba(255,255,255,0.05); padding: 2px 4px; border-radius: 4px;">${item.notification_type}</code></td>
+                        <td class="table-cell-multiline" title="${tooltipText}">
+                            <strong>${item.subject}</strong>
+                            ${item.error_message ? `<div style="font-size: 0.75rem; color: var(--accent-error); margin-top: 2px; font-family: monospace;">${item.error_message}</div>` : ''}
+                        </td>
+                        <td><span class="delivery-status ${statusClass}">${item.status}</span></td>
+                        <td style="font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: var(--text-muted);" title="${dateStr}">${dateStr}</td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            } catch (e) {
+                console.error("Failed to fetch notifications:", e);
+            }
+        }
+
+        // Auto refresh stats/tables loop
+        function startAutoRefresh() {
+            // Stats & Notifications refresh every 5 seconds
+            setInterval(() => {
+                refreshStats();
+                refreshNotifications();
+            }, 5000);
+            
+            // Tables refresh every 10 seconds to keep db load low
+            setInterval(() => {
+                refreshTechnologies();
+                refreshDomains();
+            }, 10000);
+            
+            // Real-time ticking updates for countdowns and runtimes (every second)
+            setInterval(() => {
+                updateCountdowns();
+                updateCycleRuntime();
+            }, 1000);
+        }
+
+        // Initialize dashboard
+        window.addEventListener("load", () => {
+            connectWebSocket();
+            refreshStats();
+            refreshTechnologies();
+            refreshDomains();
+            refreshNotifications();
+            startAutoRefresh();
+        });
+    </script>
+</body>
+</html>

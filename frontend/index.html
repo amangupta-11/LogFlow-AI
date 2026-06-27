@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PulseLog AI — Log Collection & Generation System</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link rel="stylesheet" href="style.css?v=3">
+</head>
+<body>
+    <div class="glass-bg"></div>
+    <div class="app-container">
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar">
+            <div class="logo">
+                <i data-lucide="terminal" class="logo-icon"></i>
+                <span class="logo-text">PulseLog <span class="accent-text">AI</span></span>
+            </div>
+            
+            <nav class="nav-menu">
+                <button class="nav-btn active" data-tab="collect">
+                    <i data-lucide="search-code"></i>
+                    <span>Log Collector</span>
+                </button>
+                <button class="nav-btn" data-tab="generate">
+                    <i data-lucide="cpu"></i>
+                    <span>Log Generator</span>
+                </button>
+                <button class="nav-btn" data-tab="search">
+                    <i data-lucide="database"></i>
+                    <span>Semantic Search</span>
+                </button>
+                <button class="nav-btn" data-tab="settings">
+                    <i data-lucide="settings"></i>
+                    <span>API Settings</span>
+                </button>
+            </nav>
+
+            <div class="status-footer">
+                <div class="status-dot green"></div>
+                <span class="status-text">Backend Connected</span>
+            </div>
+        </aside>
+
+        <!-- Main Workspace -->
+        <main class="main-content">
+            <!-- Header -->
+            <header class="app-header">
+                <h1 id="page-title">Automatic Log Collector</h1>
+                <p id="page-desc">Automate searching, scraping and structuring platform logs from web forums.</p>
+            </header>
+
+            <!-- Content Area -->
+            <section class="content-body">
+                
+                <!-- TAB 1: COLLECT -->
+                <div class="tab-pane active" id="tab-collect">
+                    <div class="grid-layout">
+                        <!-- Left controls card -->
+                        <div class="card control-card">
+                            <h2 class="card-title"><i data-lucide="sliders" class="card-icon"></i> Parameters</h2>
+                            
+                            <!-- Input Mode Toggle -->
+                            <div class="mode-toggle-container">
+                                <button type="button" class="mode-toggle-btn active" id="btn-mode-manual">Manual Input</button>
+                                <button type="button" class="mode-toggle-btn" id="btn-mode-batch">Batch Upload</button>
+                            </div>
+                            
+                            <!-- Manual Input Form -->
+                            <form id="collect-form" class="form-container">
+                                <div class="form-group">
+                                    <label for="collect-platform">Platform / Tool Name *</label>
+                                    <input type="text" id="collect-platform" placeholder="e.g. Nginx, Docker, Spring Boot" required>
+                                </div>
+                                <div class="form-group">
+                                    <label for="collect-version">Software Version</label>
+                                    <input type="text" id="collect-version" placeholder="e.g. 1.25, 25.0 (Optional)">
+                                </div>
+                                <div class="form-group">
+                                    <label for="collect-service">Module / Sub-service</label>
+                                    <input type="text" id="collect-service" placeholder="e.g. upstream, daemon (Optional)">
+                                </div>
+                                <div class="form-group-row">
+                                    <div class="form-group">
+                                        <label for="collect-start-date">Start Date</label>
+                                        <input type="datetime-local" id="collect-start-date">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="collect-end-date">End Date</label>
+                                        <input type="datetime-local" id="collect-end-date">
+                                    </div>
+                                </div>
+                                <div class="form-group">
+                                    <label for="collect-count">Maximum Logs</label>
+                                    <input type="number" id="collect-count" min="1" max="10000" value="10">
+                                </div>
+                                <button type="submit" class="btn btn-primary" id="btn-collect">
+                                    <i data-lucide="play" class="btn-icon"></i> Start Collection
+                                </button>
+                            </form>
+
+                            <!-- Batch Upload Container -->
+                            <div id="batch-container" style="display: none; margin-top: 1.25rem;">
+                                <form id="batch-form" class="form-container">
+                                    <div class="form-group">
+                                        <label>Upload Excel / CSV File *</label>
+                                        <div class="drop-zone" id="batch-drop-zone">
+                                            <i data-lucide="file-spreadsheet" class="drop-zone-icon"></i>
+                                            <span class="drop-zone-text">Drag & drop or click to upload</span>
+                                            <span class="drop-zone-sub">Supports .xlsx and .csv</span>
+                                            <input type="file" id="batch-file-input" accept=".xlsx,.csv" style="display: none;">
+                                        </div>
+                                        <div id="batch-file-info" class="file-info-banner" style="display: none; margin-top: 0.75rem;">
+                                            <i data-lucide="file-check" class="green"></i>
+                                            <span id="batch-file-name" style="word-break: break-all; font-weight: 500;"></span>
+                                        </div>
+                                    </div>
+                                    <button type="submit" class="btn btn-primary" id="btn-batch-collect" style="width: 100%; margin-top: 0.5rem;" disabled>
+                                        <i data-lucide="play" class="btn-icon"></i> Run Batch Collection
+                                    </button>
+                                </form>
+
+                                <!-- Batch Progress Tracker -->
+                                <div id="batch-progress-wrapper" class="batch-progress-card" style="display: none; margin-top: 1.5rem;">
+                                    <h3 class="progress-card-title">Batch Progress</h3>
+                                    
+                                    <div class="progress-bar-container">
+                                        <div id="batch-progress-bar" class="progress-bar-fill" style="width: 0%;"></div>
+                                    </div>
+
+                                    <div class="progress-stats-grid">
+                                        <div class="stat-box">
+                                            <span class="stat-num" id="stat-total">0</span>
+                                            <span class="stat-lbl">Total</span>
+                                        </div>
+                                        <div class="stat-box">
+                                            <span class="stat-num green" id="stat-completed">0</span>
+                                            <span class="stat-lbl">Completed</span>
+                                        </div>
+                                        <div class="stat-box">
+                                            <span class="stat-num red" id="stat-failed">0</span>
+                                            <span class="stat-lbl">Failed</span>
+                                        </div>
+                                        <div class="stat-box">
+                                            <span class="stat-num orange" id="stat-skipped">0</span>
+                                            <span class="stat-lbl">Skipped</span>
+                                        </div>
+                                        <div class="stat-box">
+                                            <span class="stat-num" id="stat-remaining">0</span>
+                                            <span class="stat-lbl">Remaining</span>
+                                        </div>
+                                    </div>
+
+                                    <div id="batch-status-text" class="batch-status-label">Initializing...</div>
+
+                                    <!-- Download ZIP Button -->
+                                    <a id="btn-download-zip" href="#" class="btn btn-primary purple-btn" style="display: none; width: 100%; margin-top: 1.25rem; text-decoration: none; text-align: center;">
+                                        <i data-lucide="download" class="btn-icon"></i> Download ZIP
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Right results card -->
+                        <div class="card display-card">
+                            <div class="display-header">
+                                <div class="header-tab-group">
+                                    <button class="console-tab-btn active" data-view="console">
+                                        <i data-lucide="terminal"></i> Console
+                                    </button>
+                                    <button class="console-tab-btn" data-view="sources">
+                                        <i data-lucide="shield-check"></i> Source Verification
+                                    </button>
+                                </div>
+                                <div class="actions-group" id="export-controls" style="display: none;">
+                                    <button class="btn btn-secondary btn-sm" onclick="exportLogs('txt')">
+                                        <i data-lucide="download"></i> TXT
+                                    </button>
+                                    <button class="btn btn-secondary btn-sm" onclick="exportLogs('json')">
+                                        <i data-lucide="download"></i> JSON
+                                    </button>
+                                    <button class="btn btn-secondary btn-sm" onclick="exportLogs('csv')">
+                                        <i data-lucide="download"></i> CSV
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="output-container">
+                                <div class="console-loader" id="collect-loader" style="display: none;">
+                                    <div class="spinner"></div>
+                                    <p class="loader-message">Searching sources...</p>
+                                    <p class="loader-sub">Scanning GitHub Issues & StackOverflow</p>
+                                </div>
+                                <div class="empty-state" id="collect-empty">
+                                    <i data-lucide="search" class="empty-icon"></i>
+                                    <h3>No Logs Loaded</h3>
+                                    <p>Enter parameters on the left and run collection to extract logs.</p>
+                                </div>
+                                <div class="log-viewer-wrapper" id="collect-viewer-wrapper" style="display: none;">
+                                    <div class="view-panel" id="panel-console" style="width: 100%;">
+                                        <div class="log-filter-bar">
+                                            <span>Filter severity:</span>
+                                            <button class="filter-badge active" data-filter="all">ALL</button>
+                                            <button class="filter-badge" data-filter="info">INFO</button>
+                                            <button class="filter-badge" data-filter="warn">WARN</button>
+                                            <button class="filter-badge" data-filter="error">ERROR</button>
+                                            <button class="filter-badge" data-filter="critical">CRITICAL</button>
+                                        </div>
+                                        <div class="log-console" id="collect-console">
+                                            <!-- Logs list will go here -->
+                                        </div>
+                                    </div>
+                                    <div class="view-panel" id="panel-sources" style="display: none; width: 100%;">
+                                         <!-- Statistics Summary Banner -->
+                                         <div class="stats-banner">
+                                             <div class="stats-card discovered">
+                                                 <span class="stats-label">Logs Discovered</span>
+                                                 <span class="stats-value" id="stats-discovered">0</span>
+                                             </div>
+                                             <div class="stats-card validated">
+                                                 <span class="stats-label">Validated Logs</span>
+                                                 <span class="stats-value" id="stats-validated">0</span>
+                                             </div>
+                                             <div class="stats-card non-validated">
+                                                 <span class="stats-label">Non-Validated Logs</span>
+                                                 <span class="stats-value" id="stats-non-validated">0</span>
+                                             </div>
+                                         </div>
+
+                                         <!-- Validated Logs Section -->
+                                         <div class="sources-section" style="margin-bottom: 25px;">
+                                             <h3 class="section-title" style="margin-bottom: 12px; color: #10b981; font-size: 1.1rem; display: flex; align-items: center; gap: 8px;">
+                                                 <i data-lucide="shield-check" style="width: 18px; height: 18px;"></i> Validated Logs
+                                             </h3>
+                                             <div class="table-scroll-container">
+                                                 <table class="results-table">
+                                                      <thead>
+                                                          <tr>
+                                                              <th style="width: 5%">#</th>
+                                                              <th style="width: 10%">Severity</th>
+                                                              <th style="width: 55%">Log Message</th>
+                                                              <th style="width: 30%">Source Link</th>
+                                                          </tr>
+                                                      </thead>
+                                                     <tbody id="verify-sources-validated-body">
+                                                         <!-- Validated logs list will go here -->
+                                                     </tbody>
+                                                 </table>
+                                             </div>
+                                         </div>
+
+                                         <!-- Non-Validated Logs Section -->
+                                         <div class="sources-section">
+                                             <h3 class="section-title" style="margin-bottom: 12px; color: #ef4444; font-size: 1.1rem; display: flex; align-items: center; gap: 8px;">
+                                                 <i data-lucide="alert-triangle" style="width: 18px; height: 18px;"></i> Non-Validated Logs
+                                             </h3>
+                                             <div class="table-scroll-container">
+                                                 <table class="results-table">
+                                                      <thead>
+                                                          <tr>
+                                                              <th style="width: 5%">#</th>
+                                                              <th style="width: 10%">Severity</th>
+                                                              <th style="width: 35%">Log Message</th>
+                                                              <th style="width: 25%">Source Link</th>
+                                                              <th style="width: 25%">Reason</th>
+                                                          </tr>
+                                                      </thead>
+                                                     <tbody id="verify-sources-non-validated-body">
+                                                         <!-- Not validated logs list will go here -->
+                                                     </tbody>
+                                                 </table>
+                                             </div>
+                                         </div>
+                                     </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- TAB 2: GENERATE -->
+                <div class="tab-pane" id="tab-generate">
+                    <div class="grid-layout">
+                        <!-- Left controls card -->
+                        <div class="card control-card">
+                            <h2 class="card-title"><i data-lucide="sliders" class="card-icon"></i> Generator Config</h2>
+                            <form id="generate-form" class="form-container">
+                                <div class="form-group">
+                                    <label for="gen-platform">Platform / Tool Name *</label>
+                                    <input type="text" id="gen-platform" placeholder="e.g. Kubernetes, AWS Lambda" required>
+                                </div>
+                                <div class="form-group">
+                                    <label for="gen-version">Software Version</label>
+                                    <input type="text" id="gen-version" placeholder="e.g. v1.28 (Optional)">
+                                </div>
+                                <div class="form-group">
+                                    <label for="gen-service">Module / Sub-service</label>
+                                    <input type="text" id="gen-service" placeholder="e.g. kubelet, node (Optional)">
+                                </div>
+                                <div class="form-group-row">
+                                    <div class="form-group">
+                                        <label for="gen-start-date">Start Date</label>
+                                        <input type="datetime-local" id="gen-start-date">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="gen-end-date">End Date</label>
+                                        <input type="datetime-local" id="gen-end-date">
+                                    </div>
+                                </div>
+                                <div class="form-group">
+                                    <label for="gen-severity">Log Severity</label>
+                                    <select id="gen-severity">
+                                        <option value="ALL">Mixed Severities</option>
+                                        <option value="INFO">INFO Only</option>
+                                        <option value="WARN">WARN Only</option>
+                                        <option value="ERROR">ERROR Only</option>
+                                        <option value="CRITICAL">CRITICAL Only</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="gen-count">Generate Count</label>
+                                    <input type="number" id="gen-count" min="1" max="10000" value="10">
+                                </div>
+                                <div class="form-group">
+                                    <label for="gen-scenario">Simulate Scenario / Error (Prompt)</label>
+                                    <textarea id="gen-scenario" rows="3" placeholder="e.g. Out of Memory error, docker network bridge down, network timeout while reaching backend database"></textarea>
+                                </div>
+                                <button type="submit" class="btn btn-primary purple-btn" id="btn-generate">
+                                    <i data-lucide="sparkles" class="btn-icon"></i> Generate Logs
+                                </button>
+                            </form>
+                        </div>
+
+                        <!-- Right results card -->
+                        <div class="card display-card">
+                            <div class="display-header">
+                                <h2 class="card-title"><i data-lucide="cpu" class="card-icon"></i> Synthetic Output</h2>
+                                <div class="actions-group" id="gen-export-controls" style="display: none;">
+                                    <button class="btn btn-secondary btn-sm" onclick="exportLogs('txt')">
+                                        <i data-lucide="download"></i> TXT
+                                    </button>
+                                    <button class="btn btn-secondary btn-sm" onclick="exportLogs('json')">
+                                        <i data-lucide="download"></i> JSON
+                                    </button>
+                                    <button class="btn btn-secondary btn-sm" onclick="exportLogs('csv')">
+                                        <i data-lucide="download"></i> CSV
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="output-container">
+                                <div class="console-loader" id="gen-loader" style="display: none;">
+                                    <div class="spinner purple-spinner"></div>
+                                    <p class="loader-message">Generating synthetic logs...</p>
+                                    <p class="loader-sub">Applying realistic system-generated formats</p>
+                                </div>
+                                <div class="empty-state" id="gen-empty">
+                                    <i data-lucide="sparkles" class="empty-icon purple-icon"></i>
+                                    <h3>No Generated Logs</h3>
+                                    <p>Configure details on the left and run generator to simulate logs.</p>
+                                </div>
+                                <div class="log-viewer-wrapper" id="gen-viewer-wrapper" style="display: none;">
+                                    <div class="log-filter-bar">
+                                        <span>Filter severity:</span>
+                                        <button class="filter-badge active" data-filter="all">ALL</button>
+                                        <button class="filter-badge" data-filter="info">INFO</button>
+                                        <button class="filter-badge" data-filter="warn">WARN</button>
+                                        <button class="filter-badge" data-filter="error">ERROR</button>
+                                        <button class="filter-badge" data-filter="critical">CRITICAL</button>
+                                    </div>
+                                    <div class="log-console" id="gen-console">
+                                        <!-- Logs list will go here -->
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- TAB 3: SEARCH -->
+                <div class="tab-pane" id="tab-search">
+                    <div class="card full-card">
+                        <h2 class="card-title"><i data-lucide="database" class="card-icon"></i> Semantic Search in Vector DB</h2>
+                        <p class="card-desc">Query collected logs semantically. E.g. search for "database failure" to match any relevant logs across all platforms.</p>
+                        
+                        <div class="search-bar-container">
+                            <input type="text" id="search-query" placeholder="Type a semantic query (e.g. 'connection timed out', 'permission denied', 'fatal out of memory')...">
+                            <button class="btn btn-primary" id="btn-search">
+                                <i data-lucide="search"></i> Search
+                            </button>
+                        </div>
+
+                        <div class="search-results-wrapper">
+                            <div class="console-loader" id="search-loader" style="display: none;">
+                                <div class="spinner"></div>
+                                <p class="loader-message">Searching vector store...</p>
+                            </div>
+                            <div class="empty-state" id="search-empty">
+                                <i data-lucide="binary" class="empty-icon"></i>
+                                <h3>Query Logs Semantically</h3>
+                                <p>Search matching events from logs previously stored in the vector database.</p>
+                            </div>
+                            
+                            <table class="results-table" id="search-results-table" style="display: none;">
+                                <thead>
+                                    <tr>
+                                        <th style="width: 12%">Platform</th>
+                                        <th style="width: 13%">Timestamp</th>
+                                        <th style="width: 8%">Severity</th>
+                                        <th style="width: 47%">Message</th>
+                                        <th style="width: 12%">Source</th>
+                                        <th style="width: 8%">Match Score</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="search-results-body">
+                                    <!-- Search results go here -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- TAB 4: SETTINGS -->
+                <div class="tab-pane" id="tab-settings">
+                    <div class="card narrow-card">
+                        <h2 class="card-title"><i data-lucide="settings" class="card-icon"></i> LLM Configuration</h2>
+                        <p class="card-desc">Provide API keys to enable full LLM log parsing and synthetic log generation.</p>
+                        
+                        <form id="settings-form" class="form-container">
+                            <div class="form-group">
+                                <label for="setting-gemini">Gemini API Key</label>
+                                <div class="input-password-wrapper">
+                                    <input type="password" id="setting-gemini" placeholder="Enter Gemini API Key">
+                                    <span class="key-status" id="gemini-status">Checking...</span>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label for="setting-openai">OpenAI API Key</label>
+                                <div class="input-password-wrapper">
+                                    <input type="password" id="setting-openai" placeholder="Enter OpenAI API Key">
+                                    <span class="key-status" id="openai-status">Checking...</span>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label for="setting-anthropic">Anthropic Claude API Key</label>
+                                <div class="input-password-wrapper">
+                                    <input type="password" id="setting-anthropic" placeholder="Enter Anthropic API Key">
+                                    <span class="key-status" id="anthropic-status">Checking...</span>
+                                </div>
+                            </div>
+                            <button type="submit" class="btn btn-primary" id="btn-save-settings">
+                                <i data-lucide="save" class="btn-icon"></i> Save Keys
+                            </button>
+                        </form>
+                    </div>
+                </div>
+
+            </section>
+        </main>
+    </div>
+
+    <!-- Notification Toast -->
+    <div class="toast" id="toast-msg">
+        <i data-lucide="info" class="toast-icon"></i>
+        <span class="toast-text">Success Message</span>
+    </div>
+
+    <script src="app.js?v=3"></script>
+</body>
+</html>

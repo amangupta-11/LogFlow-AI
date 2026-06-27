@@ -1,0 +1,60 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Caches and runtime logs
+.pytest_cache/
+*.log
+agent_crash_info.json
+
+# Environments
+.venv/
+venv/
+ENV/
+env/
+bin/
+lib/
+include/
+
+# Local configuration
+.env
+
+# SQLite databases & Local Vector Store
+*.db
+*.db-journal
+*.db-wal
+backend/db/
+
+# Batch processing outputs and reports
+backend/outputs/
+backend/notifications/
+diagnostic_report.xlsx
+archive/
+*.xlsx
+*.xls
+*.csv
+*.tsv
+*.zip
+*.tar.gz
+*.tgz
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+*~
+.DS_Store
+Thumbs.db
+
+# IDE and Project files
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+

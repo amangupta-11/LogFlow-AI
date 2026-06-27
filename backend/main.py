@@ -516,7 +516,7 @@ async def control_agent(req: ControlRequest):
         logger.error(f"Error sending control action: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/run-daily")
+@app.api_route("/api/run-daily", methods=["GET", "POST"])
 async def run_daily_endpoint():
     try:
         logger.info("Executing POST /api/run-daily - complete daily cycle")

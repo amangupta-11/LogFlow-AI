@@ -2097,12 +2097,42 @@ def execute_repo_insert(query, params=()):
         try:
             if is_postgres:
                 query = query.replace("?", "%s")
-                if "INSERT INTO" in query and "RETURNING" not in query.upper():
+                if "INSERT INTO" in query.upper() and "RETURNING" not in query.upper():
                     parts = query.split()
-                    table_name = parts[2].split("(")[0].strip()
-                    query = query.rstrip(";") + " RETURNING id"
-                    cursor.execute(query, params)
-                    last_id = cursor.fetchone()[0]
+                    table_name = ""
+                    try:
+                        into_idx = -1
+                        for idx, part in enumerate(parts):
+                            if part.upper() == "INTO":
+                                into_idx = idx
+                                break
+                        if into_idx != -1 and into_idx + 1 < len(parts):
+                            table_name = parts[into_idx + 1].split("(")[0].strip().strip('"').strip('`').strip("'")
+                    except Exception:
+                        pass
+                    
+                    if not table_name:
+                        try:
+                            table_name = parts[2].split("(")[0].strip().strip('"').strip('`').strip("'")
+                        except Exception:
+                            table_name = ""
+                            
+                    tables_without_id = {
+                        "agent_health_alert_states",
+                        "repository_metrics",
+                        "technology_coverage",
+                        "technology_log_profile",
+                        "domain_performance",
+                        "technology_aliases"
+                    }
+                    
+                    if table_name and table_name.lower() not in tables_without_id:
+                        query = query.rstrip().rstrip(";") + " RETURNING id"
+                        cursor.execute(query, params)
+                        last_id = cursor.fetchone()[0]
+                    else:
+                        cursor.execute(query, params)
+                        last_id = None
                 else:
                     cursor.execute(query, params)
                     last_id = None

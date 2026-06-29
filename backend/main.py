@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 import logging
 from fastapi import FastAPI, HTTPException, Body, UploadFile, File, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,6 +26,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="AI Log Collector & Generator API")
+frontend_path = Path(__file__).resolve().parent.parent / "frontend"
 
 # Enable CORS for frontend development
 app.add_middleware(
@@ -430,13 +432,21 @@ async def get_dashboard_metrics():
         logger.error(f"Error fetching dashboard metrics: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/", response_class=FileResponse)
+async def get_root():
+    index_path = frontend_path / "index.html"
+    if index_path.exists():
+        return FileResponse(index_path)
+    else:
+        raise HTTPException(status_code=404, detail="Frontend index.html not found")
+
 from fastapi.responses import HTMLResponse
 from fastapi import WebSocket, WebSocketDisconnect
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def get_dashboard():
-    dashboard_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard.html")
-    if os.path.exists(dashboard_path):
+    dashboard_path = Path(__file__).resolve().parent / "dashboard.html"
+    if dashboard_path.exists():
         with open(dashboard_path, "r", encoding="utf-8") as f:
             return HTMLResponse(content=f.read())
     else:
@@ -602,9 +612,8 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.error(f"Error in agent event websocket: {e}", exc_info=True)
 
 # Mount Static Frontend Files (if directory exists)
-frontend_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend"))
-if os.path.exists(frontend_path):
-    app.mount("/", StaticFiles(directory=frontend_path, html=True), name="frontend")
+if frontend_path.exists():
+    app.mount("/static", StaticFiles(directory=str(frontend_path)), name="frontend")
 else:
     logger.warning(f"Frontend directory not found at {frontend_path}. Static files not mounted.")
 

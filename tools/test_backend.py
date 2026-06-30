@@ -542,6 +542,11 @@ db-service_1  | 2026-06-15 10:20:45 ERROR org.postgresql.Driver - Database conne
         
         old_repo_db_path = os.environ.get("REPO_DB_PATH")
         os.environ["REPO_DB_PATH"] = temp_db_path
+        old_db_url = os.environ.get("DATABASE_URL")
+        if old_db_url:
+            del os.environ["DATABASE_URL"]
+        old_db_manager_url = db_manager.DATABASE_URL
+        db_manager.DATABASE_URL = None
         
         try:
             # 1. Initialize tables & aliases
@@ -645,6 +650,13 @@ db-service_1  | 2026-06-15 10:20:45 ERROR org.postgresql.Driver - Database conne
                 os.environ["REPO_DB_PATH"] = old_repo_db_path
             else:
                 os.environ.pop("REPO_DB_PATH", None)
+                
+            if old_db_url is not None:
+                os.environ["DATABASE_URL"] = old_db_url
+            else:
+                os.environ.pop("DATABASE_URL", None)
+            
+            db_manager.DATABASE_URL = old_db_manager_url
             
             if os.path.exists(temp_db_path):
                 for _ in range(5):

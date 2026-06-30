@@ -2352,23 +2352,25 @@ def get_dashboard_domains():
     ]
 
 
-def get_dashboard_notifications(severity=None):
+def get_dashboard_notifications(severity=None, limit=20):
     if not table_exists("notification_history"):
         return []
         
+    limit_clause = f"LIMIT {int(limit)}" if (limit is not None and limit > 0) else ""
+        
     if severity and severity.upper() in ["INFO", "WARNING", "ERROR", "CRITICAL"]:
-        query = """
+        query = f"""
             SELECT id, timestamp, notification_type, recipient, subject, status, error_message, severity, job_id, technology
             FROM notification_history
             WHERE UPPER(severity) = ?
-            ORDER BY id DESC LIMIT 20
+            ORDER BY id DESC {limit_clause}
         """
         params = (severity.upper(),)
     else:
-        query = """
+        query = f"""
             SELECT id, timestamp, notification_type, recipient, subject, status, error_message, severity, job_id, technology
             FROM notification_history
-            ORDER BY id DESC LIMIT 20
+            ORDER BY id DESC {limit_clause}
         """
         params = ()
         
@@ -2905,6 +2907,258 @@ def mark_notification_failed_and_history(q_id, new_retry_count, new_attempt_numb
     execute_repo_insert(h_query, (now_str, n_type, smtp_to, f"[Retry Failed] {subject}", f"Attempt failed: {err_msg}", severity, job_id, technology))
 
 
+def parse_iso_time(t_str):
+    if not t_str:
+        return None
+    t_str = t_str.replace("Z", "")
+    if "." in t_str:
+        t_str = t_str.split(".")[0]
+    try:
+        from datetime import datetime
+        return datetime.fromisoformat(t_str)
+    except Exception:
+        try:
+            from datetime import datetime
+            return datetime.strptime(t_str, "%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return None
+
+def check_postgres_health():
+    pg_url = os.getenv("DATABASE_URL")
+    if not pg_url or not (pg_url.startswith("postgres://") or pg_url.startswith("postgresql://")):
+        return "Disabled"
+    try:
+        conn = get_repo_connection()
+        is_postgres = "sqlite3" not in str(type(conn))
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1")
+        cursor.close()
+        conn.close()
+        if is_postgres:
+            return "Healthy"
+        else:
+            return "Disabled"
+    except Exception:
+        return "Critical"
+
+def check_scheduler_health():
+    try:
+        status_row = get_agent_status_metrics()
+        if not status_row:
+            return "Disabled"
+            
+        next_tech = status_row.get("next_technology_discovery")
+        next_log = status_row.get("next_log_discovery")
+        next_health = status_row.get("next_health_check")
+        next_daily = status_row.get("next_daily_report")
+        
+        if not any([next_tech, next_log, next_health, next_daily]):
+            return "Disabled"
+            
+        history_query = """
+            SELECT status FROM agent_job_history
+            WHERE job_type IN ('log_discovery', 'technology_discovery', 'health_check', 'daily_report')
+            ORDER BY id DESC LIMIT 5
+        """
+        rows = execute_repo_read(history_query)
+        if rows:
+            failed_count = sum(1 for r in rows if r["status"] == "failed")
+            if failed_count >= 3:
+                return "Critical"
+            elif failed_count > 0:
+                return "Warning"
+                
+        return "Healthy"
+    except Exception:
+        return "Critical"
+
+def check_search_providers_health():
+    try:
+        rows = execute_repo_read("""
+            SELECT status FROM agent_health_history 
+            WHERE component = 'crawler' 
+            ORDER BY id DESC LIMIT 1
+        """)
+        if rows:
+            status_val = rows[0]["status"].lower()
+            if status_val in ("healthy", "success"):
+                return "Healthy"
+            elif status_val == "warning":
+                return "Warning"
+            else:
+                return "Critical"
+        
+        event_rows = execute_repo_read("""
+            SELECT event_type FROM agent_event_feed 
+            WHERE event_type IN ('opening_url', 'page_classified', 'error')
+            ORDER BY id DESC LIMIT 10
+        """)
+        if event_rows:
+            errors = sum(1 for r in event_rows if r["event_type"] == "error")
+            successes = sum(1 for r in event_rows if r["event_type"] in ('opening_url', 'page_classified'))
+            if errors > 0 and successes == 0:
+                return "Critical"
+            elif errors > 0:
+                return "Warning"
+        return "Healthy"
+    except Exception:
+        return "Critical"
+
+def check_llm_api_health():
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    openai_key = os.getenv("OPENAI_API_KEY")
+    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+    
+    if not any([gemini_key, openai_key, anthropic_key]):
+        return "Disabled"
+        
+    try:
+        rows = execute_repo_read("SELECT validation FROM validated_logs ORDER BY id DESC LIMIT 10")
+        if rows:
+            has_llm = False
+            has_fallback = False
+            for r in rows:
+                val_json = r["validation"]
+                if val_json:
+                    try:
+                        val_data = json.loads(val_json) if isinstance(val_json, str) else val_json
+                        reason = val_data.get("reason", "")
+                        if "Fallback" in reason or "Local Verification" in reason:
+                            has_fallback = True
+                        if "Claude" in reason or "OpenAI" in reason or "Gemini" in reason:
+                            has_llm = True
+                    except Exception:
+                        pass
+            if has_fallback and not has_llm:
+                return "Critical"
+            elif has_fallback and has_llm:
+                return "Warning"
+            else:
+                return "Healthy"
+        return "Healthy"
+    except Exception:
+        return "Critical"
+
+def check_smtp_health():
+    smtp_host = os.getenv("SMTP_HOST")
+    smtp_port_str = os.getenv("SMTP_PORT")
+    smtp_user = os.getenv("SMTP_USER")
+    smtp_password = os.getenv("SMTP_PASSWORD")
+    smtp_to = os.getenv("EMAIL_TO")
+    
+    if not all([smtp_host, smtp_port_str, smtp_user, smtp_password, smtp_to]):
+        return "Disabled"
+        
+    try:
+        rows = execute_repo_read("SELECT status FROM notification_history ORDER BY id DESC LIMIT 5")
+        if rows:
+            failed = sum(1 for r in rows if r["status"] in ("Failed", "Retrying"))
+            sent = sum(1 for r in rows if r["status"] == "Sent")
+            if failed > 0 and sent == 0:
+                return "Critical"
+            elif failed > 0:
+                return "Warning"
+        return "Healthy"
+    except Exception:
+        return "Critical"
+
+def check_vector_store_health():
+    try:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        metadata_file = os.path.join(base_dir, "db", "logs_metadata.json")
+        if os.path.exists(metadata_file):
+            with open(metadata_file, "r", encoding="utf-8") as f:
+                json.load(f)
+        return "Healthy"
+    except Exception:
+        return "Critical"
+
+def evaluate_overall_health(statuses):
+    if "Critical" in statuses:
+        return "Critical"
+    if "Warning" in statuses:
+        return "Warning"
+    if "Healthy" in statuses:
+        return "Healthy"
+    return "Disabled"
+
+def get_repository_health_statuses():
+    pg_status = check_postgres_health()
+    sched_status = check_scheduler_health()
+    search_status = check_search_providers_health()
+    llm_status = check_llm_api_health()
+    smtp_status = check_smtp_health()
+    vector_status = check_vector_store_health()
+    
+    overall = evaluate_overall_health([pg_status, sched_status, search_status, llm_status, smtp_status, vector_status])
+    
+    return {
+        "postgres": pg_status,
+        "scheduler": sched_status,
+        "search_providers": search_status,
+        "llm_api": llm_status,
+        "smtp": smtp_status,
+        "vector_store": vector_status,
+        "overall": overall
+    }
+
+def get_last_run_info():
+    query = """
+        SELECT status, start_time, end_time, records_processed, errors
+        FROM agent_job_history
+        WHERE job_type = 'log_discovery'
+        ORDER BY id DESC LIMIT 1
+    """
+    rows = execute_repo_read(query)
+    if not rows:
+        return {
+            "date": "—",
+            "time": "—",
+            "duration": "—",
+            "logs_inserted": 0,
+            "status": "—"
+        }
+    
+    row = rows[0]
+    status_val = row["status"]
+    start_time_str = row["start_time"]
+    end_time_str = row["end_time"]
+    records_processed = row["records_processed"] or 0
+    
+    run_date = "—"
+    run_time = "—"
+    if start_time_str:
+        try:
+            parts = start_time_str.split("T")
+            run_date = parts[0]
+            time_part = parts[1].split(".")[0].replace("Z", "")
+            run_time = time_part
+        except Exception:
+            run_date = start_time_str
+            
+    duration_str = "—"
+    if start_time_str and end_time_str:
+        start_dt = parse_iso_time(start_time_str)
+        end_dt = parse_iso_time(end_time_str)
+        if start_dt and end_dt:
+            diff_sec = int((end_dt - start_dt).total_seconds())
+            if diff_sec < 0:
+                diff_sec = 0
+            if diff_sec < 60:
+                duration_str = f"{diff_sec}s"
+            else:
+                duration_str = f"{diff_sec // 60}m {diff_sec % 60}s"
+                
+    status_label = "Success" if status_val == "success" else ("Failed" if status_val == "failed" else "Warning")
+    
+    return {
+        "date": run_date,
+        "time": run_time,
+        "duration": duration_str,
+        "logs_inserted": records_processed,
+        "status": status_label
+    }
+
 def get_dashboard_stats_data():
     status_row = get_agent_status_metrics()
     if status_row:
@@ -3022,7 +3276,9 @@ def get_dashboard_stats_data():
         "next_technology_discovery": next_technology_discovery,
         "next_log_discovery": next_log_discovery,
         "next_health_check": next_health_check,
-        "next_daily_report": next_daily_report
+        "next_daily_report": next_daily_report,
+        "repository_health": get_repository_health_statuses(),
+        "last_run": get_last_run_info()
     }
 
 

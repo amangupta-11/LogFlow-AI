@@ -477,9 +477,9 @@ async def get_dashboard_domains():
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/dashboard/notifications")
-async def get_dashboard_notifications(severity: Optional[str] = None):
+async def get_dashboard_notifications(severity: Optional[str] = None, limit: Optional[int] = 10):
     try:
-        return db_manager.get_dashboard_notifications(severity)
+        return db_manager.get_dashboard_notifications(severity, limit)
     except Exception as e:
         logger.error(f"Error fetching dashboard notifications: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

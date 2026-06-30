@@ -3015,41 +3015,33 @@ def check_llm_api_health():
         return "Critical", "Missing API key: GEMINI_API_KEY, OPENAI_API_KEY, and ANTHROPIC_API_KEY are not configured."
         
     try:
-        rows = execute_repo_read("SELECT validation FROM validated_logs ORDER BY id DESC LIMIT 50")
-        if rows:
-            total = 0
-            llm_success = 0
-            for r in rows:
-                val_json = r["validation"]
-                if val_json:
-                    try:
-                        val_data = json.loads(val_json) if isinstance(val_json, str) else val_json
-                        reason = val_data.get("reason", "")
-                        if not reason:
-                            continue
-                        total += 1
-                        is_fallback = "Fallback" in reason or "Local Verification" in reason or "deterministic" in reason.lower()
-                        is_llm = "Claude" in reason or "OpenAI" in reason or "Gemini" in reason
-                        if is_llm and not is_fallback:
-                            llm_success += 1
-                    except Exception:
-                        pass
-            
-            if total > 0:
-                rate = (llm_success / total) * 100.0
-                rate_str = f"Validation success rate: {rate:.1f}% ({llm_success}/{total})"
-                if rate >= 95.0:
-                    return "Healthy", rate_str
-                elif rate >= 70.0:
-                    return "Warning", f"{rate_str} - falling back to offline validation"
-                else:
-                    return "Critical", f"{rate_str} - LLM API errors (HTTP 402/insufficient credits)"
+        rows = execute_repo_read("SELECT validation_result FROM repository_discovery_history ORDER BY id DESC LIMIT 50")
+        total = 0
+        llm_success = 0
+        for r in rows:
+            reason = r.get("validation_result")
+            if not reason:
+                continue
+            total += 1
+            is_fallback = "Fallback" in reason or "Local Verification" in reason or "deterministic" in reason.lower()
+            is_llm = "Claude" in reason or "OpenAI" in reason or "Gemini" in reason
+            if is_llm and not is_fallback:
+                llm_success += 1
+        
+        if total > 0:
+            rate = (llm_success / total) * 100.0
+            rate_str = f"Validation success rate: {rate:.1f}% ({llm_success}/{total})"
+            if rate >= 95.0:
+                return "Healthy", rate_str
+            elif rate >= 70.0:
+                return "Warning", f"{rate_str} - falling back to offline validation"
             else:
-                return "Healthy", "No validation logs recorded yet. API keys loaded successfully."
+                return "Critical", f"{rate_str} - LLM API errors (HTTP 402/insufficient credits)"
         else:
             return "Healthy", "No validation logs recorded yet. API keys loaded successfully."
+            
     except Exception as e:
-        return "Critical", f"Failed to check LLM logs: {e}"
+        return "Unknown", f"UNKNOWN - Health check query failed: {e}"
 
 def check_smtp_health():
     smtp_host = os.getenv("SMTP_HOST")
@@ -3092,6 +3084,8 @@ def check_vector_store_health():
 def evaluate_overall_health(statuses):
     if "Critical" in statuses:
         return "Critical", "One or more system components are in a critical state."
+    if "Unknown" in statuses:
+        return "Warning", "One or more component statuses are unknown due to query failures."
     if "Warning" in statuses:
         return "Warning", "System components are reporting warnings."
     if "Healthy" in statuses:

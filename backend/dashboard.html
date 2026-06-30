@@ -1495,6 +1495,9 @@
                         } else if (statusLower === "critical") {
                             el.classList.add("badge-critical");
                             criticalOrWarningReasons.push(`<strong>${elementId.replace('health-', '').toUpperCase()}</strong>: ${reason}`);
+                        } else if (statusLower === "unknown") {
+                            el.classList.add("badge-warning");
+                            criticalOrWarningReasons.push(`<strong>${elementId.replace('health-', '').toUpperCase()}</strong>: ${reason}`);
                         } else {
                             el.classList.add("badge-disabled");
                         }

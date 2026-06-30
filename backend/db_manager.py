@@ -2926,7 +2926,7 @@ def parse_iso_time(t_str):
 def check_postgres_health():
     pg_url = os.getenv("DATABASE_URL")
     if not pg_url or not (pg_url.startswith("postgres://") or pg_url.startswith("postgresql://")):
-        return "Disabled"
+        return "Disabled", "PostgreSQL database is not configured. SQLite is active."
     try:
         conn = get_repo_connection()
         is_postgres = "sqlite3" not in str(type(conn))
@@ -2935,17 +2935,17 @@ def check_postgres_health():
         cursor.close()
         conn.close()
         if is_postgres:
-            return "Healthy"
+            return "Healthy", "PostgreSQL connection is active."
         else:
-            return "Disabled"
-    except Exception:
-        return "Critical"
+            return "Disabled", "PostgreSQL is not the active database."
+    except Exception as e:
+        return "Critical", f"PostgreSQL query failed: {e}"
 
 def check_scheduler_health():
     try:
         status_row = get_agent_status_metrics()
         if not status_row:
-            return "Disabled"
+            return "Disabled", "No agent status metrics recorded."
             
         next_tech = status_row.get("next_technology_discovery")
         next_log = status_row.get("next_log_discovery")
@@ -2953,7 +2953,7 @@ def check_scheduler_health():
         next_daily = status_row.get("next_daily_report")
         
         if not any([next_tech, next_log, next_health, next_daily]):
-            return "Disabled"
+            return "Disabled", "No next scheduled runs configured."
             
         history_query = """
             SELECT status FROM agent_job_history
@@ -2964,45 +2964,47 @@ def check_scheduler_health():
         if rows:
             failed_count = sum(1 for r in rows if r["status"] == "failed")
             if failed_count >= 3:
-                return "Critical"
+                return "Critical", f"Scheduler has {failed_count} failures in the last 5 runs."
             elif failed_count > 0:
-                return "Warning"
+                return "Warning", f"Scheduler has {failed_count} failures in the last 5 runs."
+            return "Healthy", "All recent scheduled jobs completed successfully."
                 
-        return "Healthy"
-    except Exception:
-        return "Critical"
+        return "Healthy", "No job history recorded yet."
+    except Exception as e:
+        return "Critical", f"Failed to check scheduler status: {e}"
 
 def check_search_providers_health():
     try:
         rows = execute_repo_read("""
-            SELECT status FROM agent_health_history 
+            SELECT status, details FROM agent_health_history 
             WHERE component = 'crawler' 
             ORDER BY id DESC LIMIT 1
         """)
         if rows:
             status_val = rows[0]["status"].lower()
+            details = rows[0]["details"] or ""
             if status_val in ("healthy", "success"):
-                return "Healthy"
+                return "Healthy", f"Last crawl succeeded: {details}"
             elif status_val == "warning":
-                return "Warning"
+                return "Warning", f"Last crawl warnings: {details}"
             else:
-                return "Critical"
+                return "Critical", f"Last crawl failed: {details}"
         
         event_rows = execute_repo_read("""
-            SELECT event_type FROM agent_event_feed 
+            SELECT event_type, message FROM agent_event_feed 
             WHERE event_type IN ('opening_url', 'page_classified', 'error')
             ORDER BY id DESC LIMIT 10
         """)
         if event_rows:
-            errors = sum(1 for r in event_rows if r["event_type"] == "error")
+            errors = [r["message"] for r in event_rows if r["event_type"] == "error"]
             successes = sum(1 for r in event_rows if r["event_type"] in ('opening_url', 'page_classified'))
-            if errors > 0 and successes == 0:
-                return "Critical"
-            elif errors > 0:
-                return "Warning"
-        return "Healthy"
-    except Exception:
-        return "Critical"
+            if errors and successes == 0:
+                return "Critical", f"Search errors: {errors[0]}"
+            elif errors:
+                return "Warning", f"Recent crawl warnings: {errors[0]}"
+        return "Healthy", "Search and crawl channels are functional."
+    except Exception as e:
+        return "Critical", f"Failed to check crawl history: {e}"
 
 def check_llm_api_health():
     gemini_key = os.getenv("GEMINI_API_KEY")
@@ -3010,34 +3012,44 @@ def check_llm_api_health():
     anthropic_key = os.getenv("ANTHROPIC_API_KEY")
     
     if not any([gemini_key, openai_key, anthropic_key]):
-        return "Disabled"
+        return "Critical", "Missing API key: GEMINI_API_KEY, OPENAI_API_KEY, and ANTHROPIC_API_KEY are not configured."
         
     try:
-        rows = execute_repo_read("SELECT validation FROM validated_logs ORDER BY id DESC LIMIT 10")
+        rows = execute_repo_read("SELECT validation FROM validated_logs ORDER BY id DESC LIMIT 50")
         if rows:
-            has_llm = False
-            has_fallback = False
+            total = 0
+            llm_success = 0
             for r in rows:
                 val_json = r["validation"]
                 if val_json:
                     try:
                         val_data = json.loads(val_json) if isinstance(val_json, str) else val_json
                         reason = val_data.get("reason", "")
-                        if "Fallback" in reason or "Local Verification" in reason:
-                            has_fallback = True
-                        if "Claude" in reason or "OpenAI" in reason or "Gemini" in reason:
-                            has_llm = True
+                        if not reason:
+                            continue
+                        total += 1
+                        is_fallback = "Fallback" in reason or "Local Verification" in reason or "deterministic" in reason.lower()
+                        is_llm = "Claude" in reason or "OpenAI" in reason or "Gemini" in reason
+                        if is_llm and not is_fallback:
+                            llm_success += 1
                     except Exception:
                         pass
-            if has_fallback and not has_llm:
-                return "Critical"
-            elif has_fallback and has_llm:
-                return "Warning"
+            
+            if total > 0:
+                rate = (llm_success / total) * 100.0
+                rate_str = f"Validation success rate: {rate:.1f}% ({llm_success}/{total})"
+                if rate >= 95.0:
+                    return "Healthy", rate_str
+                elif rate >= 70.0:
+                    return "Warning", f"{rate_str} - falling back to offline validation"
+                else:
+                    return "Critical", f"{rate_str} - LLM API errors (HTTP 402/insufficient credits)"
             else:
-                return "Healthy"
-        return "Healthy"
-    except Exception:
-        return "Critical"
+                return "Healthy", "No validation logs recorded yet. API keys loaded successfully."
+        else:
+            return "Healthy", "No validation logs recorded yet. API keys loaded successfully."
+    except Exception as e:
+        return "Critical", f"Failed to check LLM logs: {e}"
 
 def check_smtp_health():
     smtp_host = os.getenv("SMTP_HOST")
@@ -3047,20 +3059,23 @@ def check_smtp_health():
     smtp_to = os.getenv("EMAIL_TO")
     
     if not all([smtp_host, smtp_port_str, smtp_user, smtp_password, smtp_to]):
-        return "Disabled"
+        return "Disabled", "SMTP email credentials are not fully configured."
         
     try:
-        rows = execute_repo_read("SELECT status FROM notification_history ORDER BY id DESC LIMIT 5")
+        rows = execute_repo_read("SELECT status, error_message FROM notification_history ORDER BY id DESC LIMIT 5")
         if rows:
-            failed = sum(1 for r in rows if r["status"] in ("Failed", "Retrying"))
+            failed = [r for r in rows if r["status"] in ("Failed", "Retrying")]
             sent = sum(1 for r in rows if r["status"] == "Sent")
-            if failed > 0 and sent == 0:
-                return "Critical"
-            elif failed > 0:
-                return "Warning"
-        return "Healthy"
-    except Exception:
-        return "Critical"
+            if failed and sent == 0:
+                err_msg = failed[0]["error_message"] or "Unknown error"
+                return "Critical", f"SMTP delivery failed: {err_msg}"
+            elif failed:
+                err_msg = failed[0]["error_message"] or "Unknown error"
+                return "Warning", f"Intermittent SMTP delivery failures: {err_msg}"
+            return "Healthy", "SMTP delivery channel is fully operational."
+        return "Healthy", "SMTP configured. No notifications sent yet."
+    except Exception as e:
+        return "Critical", f"Failed to check SMTP history: {e}"
 
 def check_vector_store_health():
     try:
@@ -3069,37 +3084,38 @@ def check_vector_store_health():
         if os.path.exists(metadata_file):
             with open(metadata_file, "r", encoding="utf-8") as f:
                 json.load(f)
-        return "Healthy"
-    except Exception:
-        return "Critical"
+            return "Healthy", "Vector store index files are accessible and healthy."
+        return "Healthy", "Vector store is initialized (no index file created yet)."
+    except Exception as e:
+        return "Critical", f"Vector store read error: {e}"
 
 def evaluate_overall_health(statuses):
     if "Critical" in statuses:
-        return "Critical"
+        return "Critical", "One or more system components are in a critical state."
     if "Warning" in statuses:
-        return "Warning"
+        return "Warning", "System components are reporting warnings."
     if "Healthy" in statuses:
-        return "Healthy"
-    return "Disabled"
+        return "Healthy", "All configured components are operating normally."
+    return "Disabled", "No components configured."
 
 def get_repository_health_statuses():
-    pg_status = check_postgres_health()
-    sched_status = check_scheduler_health()
-    search_status = check_search_providers_health()
-    llm_status = check_llm_api_health()
-    smtp_status = check_smtp_health()
-    vector_status = check_vector_store_health()
+    pg_status, pg_reason = check_postgres_health()
+    sched_status, sched_reason = check_scheduler_health()
+    search_status, search_reason = check_search_providers_health()
+    llm_status, llm_reason = check_llm_api_health()
+    smtp_status, smtp_reason = check_smtp_health()
+    vector_status, vector_reason = check_vector_store_health()
     
-    overall = evaluate_overall_health([pg_status, sched_status, search_status, llm_status, smtp_status, vector_status])
+    overall_status, overall_reason = evaluate_overall_health([pg_status, sched_status, search_status, llm_status, smtp_status, vector_status])
     
     return {
-        "postgres": pg_status,
-        "scheduler": sched_status,
-        "search_providers": search_status,
-        "llm_api": llm_status,
-        "smtp": smtp_status,
-        "vector_store": vector_status,
-        "overall": overall
+        "postgres": {"status": pg_status, "reason": pg_reason},
+        "scheduler": {"status": sched_status, "reason": sched_reason},
+        "search_providers": {"status": search_status, "reason": search_reason},
+        "llm_api": {"status": llm_status, "reason": llm_reason},
+        "smtp": {"status": smtp_status, "reason": smtp_reason},
+        "vector_store": {"status": vector_status, "reason": vector_reason},
+        "overall": {"status": overall_status, "reason": overall_reason}
     }
 
 def get_last_run_info():

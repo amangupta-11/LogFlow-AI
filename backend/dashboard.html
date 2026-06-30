@@ -899,6 +899,10 @@
                     <span style="color: var(--text-muted); font-weight: 600;">Overall Health:</span>
                     <span id="health-overall" class="badge badge-disabled" style="font-weight: bold; font-size: 0.85rem;">Disabled</span>
                 </div>
+                <div id="health-reason-container" style="margin-top: 0.8rem; font-size: 0.8rem; color: var(--text-muted); display: none; text-align: left; line-height: 1.4; border-top: 1px dashed var(--border-color); padding-top: 0.5rem;">
+                    <span style="font-weight: 600; color: var(--accent-warning);">Operational Details:</span>
+                    <div id="health-reason-text" style="margin-top: 0.2rem; color: #fff;">None</div>
+                </div>
             </div>
 
             <!-- Last Run Card -->
@@ -1470,16 +1474,30 @@
                 // Update Repository Health UI
                 if (data.repository_health) {
                     const health = data.repository_health;
-                    const setHealthBadge = (elementId, status) => {
+                    let criticalOrWarningReasons = [];
+                    
+                    const setHealthBadge = (elementId, componentData) => {
                         const el = document.getElementById(elementId);
-                        if (!el) return;
+                        if (!el || !componentData) return;
+                        const status = componentData.status || "Disabled";
+                        const reason = componentData.reason || "";
+                        
                         el.textContent = status.toUpperCase();
                         el.className = "badge";
+                        el.title = reason; // Add hover title explanation
+                        
                         const statusLower = status.toLowerCase();
-                        if (statusLower === "healthy") el.classList.add("badge-healthy");
-                        else if (statusLower === "warning") el.classList.add("badge-warning");
-                        else if (statusLower === "critical") el.classList.add("badge-critical");
-                        else el.classList.add("badge-disabled");
+                        if (statusLower === "healthy") {
+                            el.classList.add("badge-healthy");
+                        } else if (statusLower === "warning") {
+                            el.classList.add("badge-warning");
+                            criticalOrWarningReasons.push(`<strong>${elementId.replace('health-', '').toUpperCase()}</strong>: ${reason}`);
+                        } else if (statusLower === "critical") {
+                            el.classList.add("badge-critical");
+                            criticalOrWarningReasons.push(`<strong>${elementId.replace('health-', '').toUpperCase()}</strong>: ${reason}`);
+                        } else {
+                            el.classList.add("badge-disabled");
+                        }
                     };
 
                     setHealthBadge("health-postgres", health.postgres);
@@ -1489,6 +1507,21 @@
                     setHealthBadge("health-smtp", health.smtp);
                     setHealthBadge("health-vector", health.vector_store);
                     setHealthBadge("health-overall", health.overall);
+                    
+                    // Display the reasons/messages dynamically on the dashboard card
+                    const reasonContainer = document.getElementById("health-reason-container");
+                    const reasonText = document.getElementById("health-reason-text");
+                    if (reasonContainer && reasonText) {
+                        if (criticalOrWarningReasons.length > 0) {
+                            reasonText.innerHTML = criticalOrWarningReasons.join("<br/>");
+                            reasonContainer.style.display = "block";
+                        } else if (health.overall && health.overall.reason) {
+                            reasonText.textContent = health.overall.reason;
+                            reasonContainer.style.display = "block";
+                        } else {
+                            reasonContainer.style.display = "none";
+                        }
+                    }
                 }
 
                 // Update Last Successful Run UI

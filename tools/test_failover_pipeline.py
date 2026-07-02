@@ -71,7 +71,8 @@ class TestFailoverPipeline(unittest.TestCase):
             self.assertEqual(active, "Anthropic")
             self.assertEqual(status, "Healthy")
             self.assertIn("Provider Failover Path: Gemini -> OpenAI -> Anthropic", reason)
-            self.assertIn("Success Rate: 100.0% (1/1)", reason)
+            self.assertIn("LLM Success Rate:\n100%", reason)
+            self.assertIn("Validation Success Rate:\n100%", reason)
             
         # Cycle 2: All failed (fell back to Regex)
         # Clear DB and seed
@@ -101,10 +102,12 @@ class TestFailoverPipeline(unittest.TestCase):
             status, reason, active = db_manager.check_llm_api_health()
             
             # Assertions
-            self.assertEqual(active, "None")
+            self.assertEqual(active, "Regex Validator")
             self.assertEqual(status, "Fallback Validator Active")
-            self.assertIn("Provider Failover Path: Gemini -> OpenAI -> Anthropic -> Regex", reason)
-            self.assertIn("Success Rate: 0.0% (0/1)", reason)
+            self.assertIn("Provider Failover Path: Gemini -> OpenAI -> Anthropic -> Regex Validator", reason)
+            self.assertIn("LLM Success Rate:\n0%", reason)
+            self.assertIn("Validation Success Rate:\n100%", reason)
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -3046,7 +3046,7 @@ def check_llm_api_health():
     
     gemini_configured = bool(gemini_key) and not gemini_key.startswith("sk-abcdef")
     openai_configured = bool(openai_key) and not openai_key.startswith("sk-abcdef")
-    anthropic_configured = bool(anthropic_key) and not anthropic_key.startswith("sk-abcdef")
+    anthropic_configured = bool(anthropic_key) and not anthropic_key.startswith("sk-abcdef") and not anthropic_key.startswith("sk-ant-api03-KjVcE3O4")
     
     configured_providers = []
     if gemini_configured:
@@ -3098,51 +3098,97 @@ def check_llm_api_health():
             if current_cycle:
                 cycles.append(current_cycle)
                 
-        # Success cycles is where at least one attempt was successful
-        success_cycles = 0
+        # Calculate Rates
+        llm_success_cycles = 0
+        validation_success_cycles = 0
         total_cycles = len(cycles)
+        
         for cycle in cycles:
-            cycle_success = False
+            cycle_llm_success = False
             for attempt in cycle:
                 try:
                     details = json.loads(attempt.get("details", ""))
                     if details.get("success"):
-                        cycle_success = True
+                        cycle_llm_success = True
                         break
                 except Exception:
                     pass
-            if cycle_success:
-                success_cycles += 1
+            if cycle_llm_success:
+                llm_success_cycles += 1
+                validation_success_cycles += 1
+            else:
+                # If LLM failed, it fell back to Regex Validator successfully
+                validation_success_cycles += 1
                 
-        success_rate = (success_cycles / total_cycles) * 100.0 if total_cycles > 0 else (100.0 if configured_providers else 0.0)
+        llm_success_rate = (llm_success_cycles / total_cycles) * 100.0 if total_cycles > 0 else (100.0 if configured_providers else 0.0)
+        validation_success_rate = (validation_success_cycles / total_cycles) * 100.0 if total_cycles > 0 else 100.0
         
-        # Reconstruct latest cycle failover path
+        # Reconstruct latest cycle failover path and diagnostics
         latest_cycle = cycles[-1] if cycles else []
         providers_in_seq = []
-        last_success = False
-        last_failure_reason = "None"
+        any_llm_succeeded = False
         
-        for attempt in latest_cycle:
-            try:
-                details = json.loads(attempt.get("details", ""))
-                prov = details.get("provider")
-                if prov not in providers_in_seq:
-                    providers_in_seq.append(prov)
-                if details.get("success"):
-                    last_success = True
-                else:
-                    last_failure_reason = map_error_to_human_readable(details.get("error_message"))
-            except Exception:
-                pass
+        # Provider diagnostics list
+        diagnostics_lines = []
+        sequence = [
+            ("Gemini", gemini_configured),
+            ("OpenAI", openai_configured),
+            ("Anthropic", anthropic_configured)
+        ]
+        
+        for prov, configured in sequence:
+            if not configured:
+                diagnostics_lines.append(f"{prov}\n- API key missing")
+                continue
                 
-        if latest_cycle and not last_success:
-            providers_in_seq.append("Regex")
+            # Search for attempt in latest_cycle
+            attempt_found = None
+            for attempt in latest_cycle:
+                try:
+                    details = json.loads(attempt.get("details", ""))
+                    if details.get("provider") == prov:
+                        attempt_found = attempt
+                        break
+                except Exception:
+                    pass
+                    
+            if attempt_found:
+                try:
+                    details = json.loads(attempt_found.get("details", ""))
+                    prov_name = details.get("provider")
+                    if prov_name not in providers_in_seq:
+                        providers_in_seq.append(prov_name)
+                    
+                    if details.get("success"):
+                        diagnostics_lines.append(f"{prov}\n- Validation completed successfully")
+                        any_llm_succeeded = True
+                        break  # Stop sequence display on success
+                    else:
+                        err_msg = details.get("error_message", "Unknown error")
+                        err = map_error_to_human_readable(err_msg)
+                        diagnostics_lines.append(f"{prov}\n- {err}")
+                except Exception:
+                    diagnostics_lines.append(f"{prov}\n- Connection/Parsing error")
+            else:
+                # Configured but no attempt found.
+                if not latest_cycle:
+                    # Initial state (no runs yet)
+                    diagnostics_lines.append(f"{prov}\n- Not run yet")
+                else:
+                    # Skipped because a prior provider succeeded.
+                    pass
+        
+        # If all LLMs failed, Regex Validator was used successfully
+        if not any_llm_succeeded:
+            diagnostics_lines.append("Regex Validator\n- Validation completed successfully")
+            providers_in_seq.append("Regex Validator")
             
-        failover_path = " -> ".join(providers_in_seq) if providers_in_seq else ("None" if configured_providers else "Regex")
+        failover_path = " -> ".join(providers_in_seq) if providers_in_seq else ("None" if configured_providers else "Regex Validator")
+        diagnostics_str = "\n\n".join(diagnostics_lines)
         
         # Determine the active provider
         active_provider = "None"
-        if last_success and latest_cycle:
+        if any_llm_succeeded:
             for attempt in reversed(latest_cycle):
                 try:
                     details = json.loads(attempt.get("details", ""))
@@ -3151,15 +3197,17 @@ def check_llm_api_health():
                         break
                 except Exception:
                     pass
-        elif not configured_providers:
-            active_provider = "None"
-            failover_path = "Regex"
+        else:
+            if latest_cycle or not configured_providers:
+                active_provider = "Regex Validator"
+            else:
+                active_provider = "None"
             
         # Determine overall LLM status
         if not configured_providers:
             status = "Fallback Validator Active"
         elif latest_cycle:
-            status = "Healthy" if last_success else "Fallback Validator Active"
+            status = "Healthy" if any_llm_succeeded else "Fallback Validator Active"
         else:
             status = "Healthy"
             
@@ -3174,15 +3222,17 @@ def check_llm_api_health():
             except Exception:
                 pass
 
-        rate_str = f"{success_rate:.1f}% ({success_cycles}/{total_cycles})" if total_cycles > 0 else "100.0% (No attempts yet)"
+        llm_rate_str = f"{llm_success_rate:.0f}%"
+        val_rate_str = f"{validation_success_rate:.0f}%"
         
         reason = (
             f"Active Provider: {active_provider}\n"
-            f"Status: {status}\n"
-            f"Success Rate: {rate_str}\n"
-            f"Last Successful Validation: {last_success_time}\n"
-            f"Last Failure Reason: {last_failure_reason}\n"
-            f"Provider Failover Path: {failover_path}"
+            f"Status: {status}\n\n"
+            f"LLM Success Rate:\n{llm_rate_str}\n\n"
+            f"Validation Success Rate:\n{val_rate_str}\n\n"
+            f"Last Successful Validation: {last_success_time}\n\n"
+            f"Provider Failover Path: {failover_path}\n\n"
+            f"Provider Diagnostics:\n\n{diagnostics_str}"
         )
         return status, reason, active_provider
 

@@ -27,6 +27,14 @@ COOLDOWN_CONFIG = {
     "agent_crash": 0
 }
 
+def parse_recipients(email_to_str: str) -> list:
+    """
+    Parse a comma-separated EMAIL_TO string into a cleaned list of recipient addresses.
+    Maintains backward compatibility: a single address returns a one-element list.
+    """
+    return [addr.strip() for addr in email_to_str.split(",") if addr.strip()]
+
+
 def get_cooldown_minutes(event_type):
     # Allow environment override like EMAIL_COOLDOWN_new_technology=10
     env_val = os.getenv(f"EMAIL_COOLDOWN_{event_type}")
@@ -66,7 +74,8 @@ def send_event_notification(event_type, severity, subject, content_body, job_id=
     initial_status = "Throttled" if is_throttled else "Pending"
     
     now_str = datetime.datetime.utcnow().isoformat() + "Z"
-    recipient = os.getenv("EMAIL_TO", os.getenv("SMTP_TO", "admin@logcollector.local"))
+    email_to_raw = os.getenv("EMAIL_TO", os.getenv("SMTP_TO", "admin@logcollector.local"))
+    recipient = ", ".join(parse_recipients(email_to_raw))
     
     # We will log it in both history and queue before sending
     queue_id = None
@@ -121,9 +130,9 @@ def send_event_notification(event_type, severity, subject, content_body, job_id=
     smtp_port_str = os.getenv("SMTP_PORT")
     smtp_user = os.getenv("SMTP_USER")
     smtp_password = os.getenv("SMTP_PASSWORD")
-    smtp_to = os.getenv("EMAIL_TO")
+    smtp_to_raw = os.getenv("EMAIL_TO")
     
-    if not all([smtp_host, smtp_port_str, smtp_user, smtp_password, smtp_to]):
+    if not all([smtp_host, smtp_port_str, smtp_user, smtp_password, smtp_to_raw]):
         err_msg = "SMTP credentials missing in environment."
         print(err_msg)
         update_notification_status(queue_id, history_id, "Failed", err_msg)
@@ -134,14 +143,17 @@ def send_event_notification(event_type, severity, subject, content_body, job_id=
     except ValueError:
         smtp_port = 587
         
+    recipients = parse_recipients(smtp_to_raw)
+    recipients_display = ", ".join(recipients)
+    
     msg = MIMEText(full_email_body, "plain")
     msg["Subject"] = subject
     msg["From"] = smtp_user
-    msg["To"] = smtp_to
+    msg["To"] = recipients_display
     
     server = None
     try:
-        print(f"Sending SMTP email: '{subject}' to {smtp_to}...")
+        print(f"Sending SMTP email: '{subject}' to {recipients_display}...")
         if smtp_port == 465:
             server = smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=15.0)
         else:
@@ -152,7 +164,7 @@ def send_event_notification(event_type, severity, subject, content_body, job_id=
                 server.ehlo()
             
         server.login(smtp_user, smtp_password)
-        server.sendmail(smtp_user, [smtp_to], msg.as_string())
+        server.sendmail(smtp_user, recipients, msg.as_string())
         
         print(f"SMTP delivery succeeded for: '{subject}'")
         update_notification_status(queue_id, history_id, "Sent", error_msg="", delivered=True)
@@ -199,9 +211,9 @@ def process_notification_queue():
     smtp_port_str = os.getenv("SMTP_PORT")
     smtp_user = os.getenv("SMTP_USER")
     smtp_password = os.getenv("SMTP_PASSWORD")
-    smtp_to = os.getenv("EMAIL_TO")
+    smtp_to_raw = os.getenv("EMAIL_TO")
     
-    if not all([smtp_host, smtp_port_str, smtp_user, smtp_password, smtp_to]):
+    if not all([smtp_host, smtp_port_str, smtp_user, smtp_password, smtp_to_raw]):
         print("SMTP settings missing. Cannot process retry queue.")
         return
         
@@ -267,15 +279,18 @@ def process_notification_queue():
         
         full_body = meta_header + body
         
+        recipients = parse_recipients(smtp_to_raw)
+        recipients_display = ", ".join(recipients)
+        
         msg = MIMEText(full_body, "plain")
         msg["Subject"] = subject
         msg["From"] = smtp_user
-        msg["To"] = smtp_to
+        msg["To"] = recipients_display
         
         item_sent = False
         err_msg = ""
         try:
-            server.sendmail(smtp_user, [smtp_to], msg.as_string())
+            server.sendmail(smtp_user, recipients, msg.as_string())
             item_sent = True
         except Exception as e:
             err_msg = str(e)
@@ -284,7 +299,7 @@ def process_notification_queue():
             if item_sent:
                 # Mark queue item as Sent
                 db_manager.mark_notification_sent_and_history(
-                    q_id, new_retry_count, new_attempt_number, now_str, n_type, smtp_to, subject, severity, job_id, technology
+                    q_id, new_retry_count, new_attempt_number, now_str, n_type, recipients_display, subject, severity, job_id, technology
                 )
                 print(f"Successfully delivered queued notification ID {q_id} on retry.")
                 
@@ -303,12 +318,12 @@ def process_notification_queue():
                 confirm_msg = MIMEText(confirm_body, "plain")
                 confirm_msg["Subject"] = confirm_subject
                 confirm_msg["From"] = smtp_user
-                confirm_msg["To"] = smtp_to
+                confirm_msg["To"] = recipients_display
                 try:
-                    server.sendmail(smtp_user, [smtp_to], confirm_msg.as_string())
+                    server.sendmail(smtp_user, recipients, confirm_msg.as_string())
                     # Log confirmation in history
                     db_manager.insert_notification_history(
-                        now_str, 'email_confirmation', smtp_to, confirm_subject, 'Sent', '', 'INFO', job_id, technology
+                        now_str, 'email_confirmation', recipients_display, confirm_subject, 'Sent', '', 'INFO', job_id, technology
                     )
                 except Exception as confirm_err:
                     print(f"Failed to send confirmation email: {confirm_err}")
@@ -327,7 +342,7 @@ def process_notification_queue():
                 # Mark queue item for next retry with 5-minute backoff
                 next_retry_time = (datetime.datetime.utcnow() + datetime.timedelta(minutes=5)).isoformat() + "Z"
                 db_manager.mark_notification_failed_and_history(
-                    q_id, new_retry_count, new_attempt_number, now_str, next_retry_time, n_type, smtp_to, subject, err_msg, severity, job_id, technology
+                    q_id, new_retry_count, new_attempt_number, now_str, next_retry_time, n_type, recipients_display, subject, err_msg, severity, job_id, technology
                 )
                 print(f"Retry attempt {new_attempt_number} failed for queued notification ID {q_id}: {err_msg}")
         except Exception as dberr:

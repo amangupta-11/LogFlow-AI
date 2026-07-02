@@ -579,52 +579,9 @@ def post_validate_logs(validated_logs: list, raw_text: str, platform: str = "") 
         final_logs.append(log_copy)
     return final_logs
 
-def validate_logs_with_claude(extracted_logs: list, raw_text: str, platform: str = "", version: str = "") -> list:
-    """
-    Query Anthropic's Claude Messages REST API to validate extracted logs against raw scraped content.
-    Returns the log list updated with 'validation' keys: {'valid': bool, 'reason': str}.
-    Process in chunks of 15 logs to prevent response truncation, token limit credit locks, or LLM distraction.
-    """
-    if not extracted_logs:
-        return []
-        
-    chunk_size = 15
-    validated_logs = []
-    
-    for i in range(0, len(extracted_logs), chunk_size):
-        chunk = extracted_logs[i:i+chunk_size]
-        logger.info(f"Processing validation batch {i//chunk_size + 1} ({len(chunk)} logs)...")
-        validated_chunk = validate_logs_with_claude_batch(chunk, raw_text, platform, version)
-        validated_logs.extend(validated_chunk)
-        
-    return post_validate_logs(validated_logs, raw_text, platform)
-
-def validate_logs_with_claude_batch(extracted_logs: list, raw_text: str, platform: str = "", version: str = "") -> list:
-    """
-    Validate a single batch of extracted logs against raw scraped content.
-    """
-    claude_success = False
-    updated_logs = []
-    
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if api_key:
-        if api_key.startswith("sk-or-v1-"):
-            logger.info("Anthropic API key is an OpenRouter key. Using OpenRouter to validate with Claude...")
-            openrouter_logs = validate_logs_with_openrouter(
-                extracted_logs,
-                raw_text,
-                api_key,
-                model_name="anthropic/claude-sonnet-4",
-                reason_prefix="Claude Verification (OpenRouter)",
-                platform=platform,
-                version=version
-            )
-            if openrouter_logs is not None:
-                return openrouter_logs
-        elif not api_key.startswith("sk-ant-api03-KjVcE3O4"):
-            logger.info("Connecting to Anthropic Claude to validate logs...")
-            prompt = f"""
-You are an independent system log validation authority.
+def make_validation_prompt(extracted_logs: list, raw_text: str, platform: str = "", version: str = "") -> str:
+    import json
+    return f"""You are an independent system log validation authority.
 Your task is to validate a list of extracted log entries against the raw scraped text they were extracted from.
 We are specifically looking for logs matching Platform: '{platform}' and Version: '{version}' (if version is specified).
 
@@ -640,87 +597,266 @@ You are a Log Verification Engine. Assume all logs are INVALID until proven othe
 2. A log may be marked "valid": true only if:
    - The content appears machine-generated and is copied directly from the raw text.
    - The content conforms to at least one of these three acceptance paths:
-     - Path A (timestamp + log metadata): Contains a timestamp AND log metadata (like severity, process name, request ID, event ID, client IP, request method). Preserves existing CloudWatch, Syslog, Apache, Nginx, and Application log validation formats.
-     - Path B (exception + stack trace): Contains an exception signature or stack trace (including Java stack trace lines without timestamps).
-     - Path C (well-known operational error patterns): Contains well-known error signatures such as: CrashLoopBackOff, OOMKilled, Invoke Error, Kernel Panic, Segmentation Fault, segfault, OutOfMemory.
+     - Path A (timestamp + log metadata): Contains a timestamp AND log metadata (like severity, process name, request ID, event ID, client IP, request method).
+     - Path B (exception + stack trace): Contains an exception signature or stack trace.
+     - Path C (well-known operational error patterns): Contains well-known error signatures.
    - The content belongs to the requested platform: '{platform}' and version: '{version}' (if version is specified).
 3. Reject documentation snippets, blog explanations, tutorials, or marketing text that are not complete log entries.
-   - EXAMPLES TO REJECT:
-     "Execution failed due to configuration error"
-     "Gateway response body: { ... }"
-     unless accompanied by a timestamp, requestId, or other log metadata.
-   - AUTOMATICALLY REJECT the entry (set "valid": false) if it represents:
-     - Human explanation, markdown content, or code comments.
-     - Configuration examples, installation instructions, or command/shell command examples without log metadata.
-4. Return the results strictly as a JSON list of objects matching the length of the Extracted Logs list, with exactly the keys:
+4. Return the results strictly as a JSON object containing a list named "results", matching the length of the Extracted Logs list, where each item has exactly the keys:
    "valid", "reason"
    Set "valid": true only if confidence score is >= 90 based on exact conformant machine-generated logs.
-5. Do not include markdown code block formatting (like ```json) in your final response. Return ONLY raw JSON.
+5. Return ONLY the raw JSON object. Do not include markdown wrapping (like ```json ... ```).
 """
 
-            headers = {
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json"
-            }
+def validate_with_gemini_provider(extracted_logs: list, raw_text: str, platform: str, version: str) -> list:
+    import time
+    import json
+    import google.generativeai as genai
+    from backend.db_manager import record_llm_validation
+    
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key or api_key.startswith("sk-abcdef"):
+        return None
+        
+    chunk_size = 15
+    validated_logs = []
+    
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(
+            model_name="gemini-2.5-flash",
+            generation_config={"response_mime_type": "application/json"}
+        )
+        
+        for i in range(0, len(extracted_logs), chunk_size):
+            chunk = extracted_logs[i:i+chunk_size]
+            prompt = make_validation_prompt(chunk, raw_text, platform, version)
             
-            payload = {
-                "model": "claude-3-5-sonnet-20240620",
-                "max_tokens": 1500,
-                "messages": [
-                    {"role": "user", "content": prompt}
-                ]
-            }
+            start_time = time.time()
+            response = model.generate_content(prompt)
+            duration = time.time() - start_time
             
-            try:
-                from backend.db_manager import record_llm_validation
-                response = requests.post("https://api.anthropic.com/v1/messages", json=payload, headers=headers, timeout=20)
-                if response.status_code == 200:
-                    data = response.json()
-                    text = data["content"][0]["text"].strip()
-                    
-                    # Clean up markdown JSON wrappers if present
-                    if text.startswith("```json"):
-                        text = text.split("```json")[1].split("```")[0].strip()
-                    elif text.startswith("```"):
-                        text = text.split("```")[1].split("```")[0].strip()
-                        
-                    validation_results = json.loads(text)
-                    
-                    if isinstance(validation_results, list) and len(validation_results) == len(extracted_logs):
-                        for log, val in zip(extracted_logs, validation_results):
-                            log_copy = log.copy()
-                            log_copy["validation"] = {
-                                "valid": val.get("valid", False),
-                                "reason": f"Claude Verification: {val.get('reason', 'No reason provided')}"
-                            }
-                            updated_logs.append(log_copy)
-                        claude_success = True
-                        record_llm_validation("Anthropic", True)
-                    else:
-                        err_msg = f"Invalid response size/format: expected {len(extracted_logs)} items, got {len(validation_results) if isinstance(validation_results, list) else 'non-list'}"
-                        logger.error(f"Claude returned: {err_msg}")
-                        record_llm_validation("Anthropic", False, err_msg)
-                else:
-                    err_msg = f"HTTP {response.status_code}: {response.text}"
-                    logger.error(f"Anthropic API returned status: {err_msg}")
-                    record_llm_validation("Anthropic", False, err_msg)
-            except Exception as e:
-                from backend.db_manager import record_llm_validation
-                err_msg = f"Connection/Parsing error: {e}"
-                logger.error(f"Error calling Claude validator API: {err_msg}")
-                record_llm_validation("Anthropic", False, err_msg)
+            text = response.text.strip()
+            data = json.loads(text)
+            validation_results = data.get("results", [])
+            
+            if not isinstance(validation_results, list) or len(validation_results) != len(chunk):
+                raise ValueError(f"Invalid response format: expected {len(chunk)} results, got {len(validation_results) if isinstance(validation_results, list) else 'non-list'}")
+                
+            for log, val in zip(chunk, validation_results):
+                log_copy = log.copy()
+                log_copy["validation"] = {
+                    "valid": val.get("valid", False),
+                    "reason": f"Gemini Verification: {val.get('reason', 'No reason provided')}"
+                }
+                validated_logs.append(log_copy)
+                
+            record_llm_validation("Gemini", True, response_time=duration)
+            
+        return validated_logs
+        
+    except Exception as e:
+        duration = time.time() - start_time if 'start_time' in locals() else 0.0
+        err_msg = str(e)
+        logger.error(f"Gemini provider validation failed: {err_msg}")
+        record_llm_validation("Gemini", False, err_msg, response_time=duration)
+        return None
 
-    # Fallback to OpenAI if Claude is unconfigured or failed
-    if not claude_success:
-        logger.info("Claude validation failed or unconfigured. Falling back to OpenAI validation...")
-        openai_logs = validate_logs_with_openai(extracted_logs, raw_text, "OpenAI Fallback Verification", platform, version)
-        if openai_logs is not None:
-            return openai_logs
- 
-        # If both fail/are unconfigured, fallback to local offline validation as last resort
-        logger.warning("Both Claude and OpenAI validations failed or are unconfigured. Falling back to local offline validation.")
-        return local_validation(extracted_logs, raw_text, "Local Verification Fallback", platform, version)
+def validate_with_openai_provider(extracted_logs: list, raw_text: str, platform: str, version: str) -> list:
+    import time
+    import json
+    from openai import OpenAI
+    from backend.db_manager import record_llm_validation
+    
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key or api_key.startswith("sk-abcdef"):
+        return None
+        
+    is_openrouter = api_key.startswith("sk-or-v1-")
+    chunk_size = 15
+    validated_logs = []
+    
+    try:
+        if is_openrouter:
+            client = OpenAI(api_key=api_key, base_url="https://openrouter.ai/api/v1")
+            model_name = "openai/gpt-4o-mini"
+        else:
+            client = OpenAI(api_key=api_key)
+            model_name = "gpt-4o-mini"
+            
+        for i in range(0, len(extracted_logs), chunk_size):
+            chunk = extracted_logs[i:i+chunk_size]
+            prompt = make_validation_prompt(chunk, raw_text, platform, version)
+            
+            start_time = time.time()
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
+                temperature=0.2,
+                max_tokens=1000,
+                timeout=20
+            )
+            duration = time.time() - start_time
+            
+            text = response.choices[0].message.content.strip()
+            data = json.loads(text)
+            validation_results = data.get("results", [])
+            
+            if not isinstance(validation_results, list) or len(validation_results) != len(chunk):
+                raise ValueError(f"Invalid response format: expected {len(chunk)} results, got {len(validation_results) if isinstance(validation_results, list) else 'non-list'}")
+                
+            for log, val in zip(chunk, validation_results):
+                log_copy = log.copy()
+                log_copy["validation"] = {
+                    "valid": val.get("valid", False),
+                    "reason": f"OpenAI Verification: {val.get('reason', 'No reason provided')}"
+                }
+                validated_logs.append(log_copy)
+                
+            record_llm_validation("OpenAI", True, response_time=duration)
+            
+        return validated_logs
+        
+    except Exception as e:
+        duration = time.time() - start_time if 'start_time' in locals() else 0.0
+        err_msg = str(e)
+        logger.error(f"OpenAI provider validation failed: {err_msg}")
+        record_llm_validation("OpenAI", False, err_msg, response_time=duration)
+        return None
 
-    return updated_logs
+def validate_with_anthropic_provider(extracted_logs: list, raw_text: str, platform: str, version: str) -> list:
+    import time
+    import json
+    import requests
+    from backend.db_manager import record_llm_validation
+    
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key or api_key.startswith("sk-abcdef") or api_key.startswith("sk-ant-api03-KjVcE3O4"):
+        return None
+        
+    is_openrouter = api_key.startswith("sk-or-v1-")
+    chunk_size = 15
+    validated_logs = []
+    
+    try:
+        for i in range(0, len(extracted_logs), chunk_size):
+            chunk = extracted_logs[i:i+chunk_size]
+            prompt = make_validation_prompt(chunk, raw_text, platform, version)
+            
+            start_time = time.time()
+            if is_openrouter:
+                headers = {
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json"
+                }
+                payload = {
+                    "model": "anthropic/claude-sonnet-4",
+                    "max_tokens": 1500,
+                    "messages": [{"role": "user", "content": prompt}]
+                }
+                response = requests.post("https://openrouter.ai/api/v1/chat/completions", json=payload, headers=headers, timeout=25)
+                duration = time.time() - start_time
+                
+                if response.status_code != 200:
+                    raise RuntimeError(f"HTTP {response.status_code}: {response.text}")
+                    
+                data = response.json()
+                text = data["choices"][0]["message"]["content"].strip()
+            else:
+                headers = {
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json"
+                }
+                payload = {
+                    "model": "claude-3-5-sonnet-20240620",
+                    "max_tokens": 1500,
+                    "messages": [{"role": "user", "content": prompt}]
+                }
+                response = requests.post("https://api.anthropic.com/v1/messages", json=payload, headers=headers, timeout=25)
+                duration = time.time() - start_time
+                
+                if response.status_code != 200:
+                    raise RuntimeError(f"HTTP {response.status_code}: {response.text}")
+                    
+                data = response.json()
+                text = data["content"][0]["text"].strip()
+                
+            if text.startswith("```json"):
+                text = text.split("```json")[1].split("```")[0].strip()
+            elif text.startswith("```"):
+                text = text.split("```")[1].split("```")[0].strip()
+                
+            validation_results = json.loads(text)
+            
+            if isinstance(validation_results, dict) and "results" in validation_results:
+                validation_results = validation_results["results"]
+                
+            if not isinstance(validation_results, list) or len(validation_results) != len(chunk):
+                raise ValueError(f"Invalid response format: expected {len(chunk)} results, got {len(validation_results) if isinstance(validation_results, list) else 'non-list'}")
+                
+            for log, val in zip(chunk, validation_results):
+                log_copy = log.copy()
+                log_copy["validation"] = {
+                    "valid": val.get("valid", False),
+                    "reason": f"Claude Verification: {val.get('reason', 'No reason provided')}"
+                }
+                validated_logs.append(log_copy)
+                
+            record_llm_validation("Anthropic", True, response_time=duration)
+            
+        return validated_logs
+        
+    except Exception as e:
+        duration = time.time() - start_time if 'start_time' in locals() else 0.0
+        err_msg = str(e)
+        logger.error(f"Anthropic provider validation failed: {err_msg}")
+        record_llm_validation("Anthropic", False, err_msg, response_time=duration)
+        return None
+
+def validate_logs_with_claude(extracted_logs: list, raw_text: str, platform: str = "", version: str = "") -> list:
+    """
+    Validation Pipeline with Failover:
+    1. Gemini
+    2. OpenAI
+    3. Anthropic
+    4. Local offline validation (Regex / Deterministic Validator)
+    """
+    if not extracted_logs:
+        return []
+        
+    # 1. Try Gemini
+    logger.info("Pipeline Step 1: Trying Gemini...")
+    res = validate_with_gemini_provider(extracted_logs, raw_text, platform, version)
+    if res is not None:
+        logger.info("Gemini validation succeeded.")
+        return post_validate_logs(res, raw_text, platform)
+        
+    logger.info("Gemini validation failed or unconfigured. Falling back to OpenAI validation...")
+    
+    # 2. Try OpenAI
+    logger.info("Pipeline Step 2: Trying OpenAI...")
+    res = validate_with_openai_provider(extracted_logs, raw_text, platform, version)
+    if res is not None:
+        logger.info("OpenAI validation succeeded.")
+        return post_validate_logs(res, raw_text, platform)
+        
+    logger.info("OpenAI validation failed or unconfigured. Falling back to Anthropic validation...")
+    
+    # 3. Try Anthropic
+    logger.info("Pipeline Step 3: Trying Anthropic...")
+    res = validate_with_anthropic_provider(extracted_logs, raw_text, platform, version)
+    if res is not None:
+        logger.info("Anthropic validation succeeded.")
+        return post_validate_logs(res, raw_text, platform)
+        
+    logger.warning("Anthropic validation failed or unconfigured. Falling back to local offline validation...")
+    
+    # 4. Fallback to Regex/Deterministic Validator
+    logger.warning("Pipeline Step 4: All LLMs failed. Falling back to local offline validation.")
+    res = local_validation(extracted_logs, raw_text, "Local Verification Fallback", platform, version)
+    return post_validate_logs(res, raw_text, platform)
+
+
 

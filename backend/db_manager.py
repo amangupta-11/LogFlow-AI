@@ -2614,12 +2614,13 @@ def log_health_status(component, status, details):
     )
 
 
-def record_llm_validation(provider: str, success: bool, error_message: str = None):
+def record_llm_validation(provider: str, success: bool, error_message: str = None, response_time: float = 0.0):
     import json
     details_dict = {
         "provider": provider,
         "success": success,
-        "error_message": error_message or ""
+        "error_message": error_message or "",
+        "response_time": response_time
     }
     log_health_status("llm_api", "healthy" if success else "unhealthy", json.dumps(details_dict))
 
@@ -3048,12 +3049,12 @@ def check_llm_api_health():
     anthropic_configured = bool(anthropic_key) and not anthropic_key.startswith("sk-abcdef")
     
     configured_providers = []
-    if anthropic_configured:
-        configured_providers.append("Anthropic")
-    if openai_configured:
-        configured_providers.append("OpenAI")
     if gemini_configured:
         configured_providers.append("Gemini")
+    if openai_configured:
+        configured_providers.append("OpenAI")
+    if anthropic_configured:
+        configured_providers.append("Anthropic")
 
     try:
         # Fetch last 50 validation records for 'llm_api' component
@@ -3079,125 +3080,101 @@ def check_llm_api_health():
                 except Exception:
                     pass
         
-        # Determine the active provider
-        active_provider = None
+        # Chronological attempts within the last 24 hours (up to 50 attempts)
+        chrono_attempts = sorted(valid_attempts, key=lambda x: x.get("timestamp", ""))
         
-        # 1. Most recent successful validation in the rolling window
-        for attempt in valid_attempts:
-            details_str = attempt.get("details", "")
+        # Group attempts into validation cycles (consecutive attempts within 30s)
+        cycles = []
+        if chrono_attempts:
+            current_cycle = [chrono_attempts[0]]
+            for row in chrono_attempts[1:]:
+                t1 = datetime.fromisoformat(row["timestamp"].replace("Z", "").split(".")[0])
+                t2 = datetime.fromisoformat(current_cycle[-1]["timestamp"].replace("Z", "").split(".")[0])
+                if abs((t2 - t1).total_seconds()) <= 30:
+                    current_cycle.append(row)
+                else:
+                    cycles.append(current_cycle)
+                    current_cycle = [row]
+            if current_cycle:
+                cycles.append(current_cycle)
+                
+        # Success cycles is where at least one attempt was successful
+        success_cycles = 0
+        total_cycles = len(cycles)
+        for cycle in cycles:
+            cycle_success = False
+            for attempt in cycle:
+                try:
+                    details = json.loads(attempt.get("details", ""))
+                    if details.get("success"):
+                        cycle_success = True
+                        break
+                except Exception:
+                    pass
+            if cycle_success:
+                success_cycles += 1
+                
+        success_rate = (success_cycles / total_cycles) * 100.0 if total_cycles > 0 else (100.0 if configured_providers else 0.0)
+        
+        # Reconstruct latest cycle failover path
+        latest_cycle = cycles[-1] if cycles else []
+        providers_in_seq = []
+        last_success = False
+        last_failure_reason = "None"
+        
+        for attempt in latest_cycle:
             try:
-                details = json.loads(details_str)
-                if details.get("success") and details.get("provider") in configured_providers:
-                    active_provider = details.get("provider")
-                    break
+                details = json.loads(attempt.get("details", ""))
+                prov = details.get("provider")
+                if prov not in providers_in_seq:
+                    providers_in_seq.append(prov)
+                if details.get("success"):
+                    last_success = True
+                else:
+                    last_failure_reason = map_error_to_human_readable(details.get("error_message"))
             except Exception:
                 pass
                 
-        # 2. Most recent attempt in the rolling window
-        if not active_provider:
-            for attempt in valid_attempts:
-                details_str = attempt.get("details", "")
+        if latest_cycle and not last_success:
+            providers_in_seq.append("Regex")
+            
+        failover_path = " -> ".join(providers_in_seq) if providers_in_seq else ("None" if configured_providers else "Regex")
+        
+        # Determine the active provider
+        active_provider = "None"
+        if last_success and latest_cycle:
+            for attempt in reversed(latest_cycle):
                 try:
-                    details = json.loads(details_str)
-                    if details.get("provider") in configured_providers:
+                    details = json.loads(attempt.get("details", ""))
+                    if details.get("success"):
                         active_provider = details.get("provider")
                         break
                 except Exception:
                     pass
-                    
-        # 3. Fallback to default priority of configured providers
-        if not active_provider:
-            if anthropic_configured:
-                active_provider = "Anthropic"
-            elif openai_configured:
-                active_provider = "OpenAI"
-            elif gemini_configured:
-                active_provider = "Gemini"
-            else:
-                active_provider = "None"
-
-        # Calculate success rate for the active provider in the rolling window
-        active_attempts = []
-        for attempt in valid_attempts:
-            details_str = attempt.get("details", "")
-            try:
-                details = json.loads(details_str)
-                if details.get("provider") == active_provider:
-                    active_attempts.append(details)
-            except Exception:
-                pass
-
-        total_count = len(active_attempts)
-        if total_count > 0:
-            success_count = sum(1 for a in active_attempts if a.get("success"))
-            success_rate = (success_count / total_count) * 100.0
+        elif not configured_providers:
+            active_provider = "None"
+            failover_path = "Regex"
+            
+        # Determine overall LLM status
+        if not configured_providers:
+            status = "Fallback Validator Active"
+        elif latest_cycle:
+            status = "Healthy" if last_success else "Fallback Validator Active"
         else:
-            success_count = 0
-            success_rate = 100.0 if active_provider != "None" else 0.0
-
+            status = "Healthy"
+            
         # Last successful validation timestamp
         last_success_time = "Never"
-        for attempt in valid_attempts:
-            details_str = attempt.get("details", "")
+        for attempt in reversed(chrono_attempts):
             try:
-                details = json.loads(details_str)
-                if details.get("provider") == active_provider and details.get("success"):
+                details = json.loads(attempt.get("details", ""))
+                if details.get("success"):
                     last_success_time = attempt.get("timestamp")
                     break
             except Exception:
                 pass
 
-        # Last failure reason
-        last_failure_reason = "None"
-        for attempt in valid_attempts:
-            details_str = attempt.get("details", "")
-            try:
-                details = json.loads(details_str)
-                if details.get("provider") == active_provider and not details.get("success"):
-                    last_failure_reason = map_error_to_human_readable(details.get("error_message"))
-                    break
-            except Exception:
-                pass
-
-        # Determine Fallback Status
-        fallback_status = "None"
-        if active_provider == "None":
-            fallback_status = "Active (No LLM keys configured; using Regex/Deterministic validation)"
-        elif success_rate < 70.0:
-            other_succeeded = False
-            other_provider = None
-            for p in ["Anthropic", "OpenAI"]:
-                if p != active_provider and p in configured_providers:
-                    # Check if p has success in rolling window
-                    for attempt in valid_attempts:
-                        details_str = attempt.get("details", "")
-                        try:
-                            details = json.loads(details_str)
-                            if details.get("provider") == p and details.get("success"):
-                                other_succeeded = True
-                                other_provider = p
-                                break
-                        except Exception:
-                            pass
-                    if other_succeeded:
-                        break
-            if other_succeeded:
-                fallback_status = f"Fell back to {other_provider} successfully"
-            else:
-                fallback_status = "Fell back to Regex/Deterministic validation"
-
-        # Determine overall LLM status
-        if active_provider == "None":
-            status = "Fallback Validator Active"
-        else:
-            if success_rate >= 95.0:
-                status = "Healthy"
-            elif success_rate >= 70.0:
-                status = "Warning"
-            else:
-                status = "Fallback Validator Active"
-
-        rate_str = f"{success_rate:.1f}% ({success_count}/{total_count})" if total_count > 0 else "100.0% (No attempts yet)"
+        rate_str = f"{success_rate:.1f}% ({success_cycles}/{total_cycles})" if total_cycles > 0 else "100.0% (No attempts yet)"
         
         reason = (
             f"Active Provider: {active_provider}\n"
@@ -3205,12 +3182,13 @@ def check_llm_api_health():
             f"Success Rate: {rate_str}\n"
             f"Last Successful Validation: {last_success_time}\n"
             f"Last Failure Reason: {last_failure_reason}\n"
-            f"Fallback Status: {fallback_status}"
+            f"Provider Failover Path: {failover_path}"
         )
         return status, reason, active_provider
 
     except Exception as e:
         return "Unknown", f"UNKNOWN - Health check query failed: {e}", "None"
+
 
 def check_smtp_health():
     smtp_host = os.getenv("SMTP_HOST")

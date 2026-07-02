@@ -406,6 +406,8 @@ You are a Log Verification Engine. Assume all logs are INVALID until proven othe
         
     try:
         response = requests.post("https://openrouter.ai/api/v1/chat/completions", json=payload, headers=headers, timeout=30)
+        provider = "Anthropic" if "anthropic" in model_name or "claude" in model_name.lower() else "OpenAI"
+        from backend.db_manager import record_llm_validation
         if response.status_code == 200:
             data = response.json()
             text = data["choices"][0]["message"]["content"].strip()
@@ -423,7 +425,9 @@ You are a Log Verification Engine. Assume all logs are INVALID until proven othe
             elif isinstance(result_data, dict) and "results" in result_data:
                 validation_results = result_data["results"]
             else:
+                err_msg = f"Unexpected JSON structure: {result_data}"
                 logger.error(f"OpenRouter response JSON format unexpected: {result_data}")
+                record_llm_validation(provider, False, err_msg)
                 return None
                 
             if isinstance(validation_results, list) and len(validation_results) == len(extracted_logs):
@@ -435,13 +439,22 @@ You are a Log Verification Engine. Assume all logs are INVALID until proven othe
                         "reason": f"{reason_prefix}: {val.get('reason', 'No reason provided')}"
                     }
                     updated_logs.append(log_copy)
+                record_llm_validation(provider, True)
                 return updated_logs
             else:
-                logger.error(f"OpenRouter returned invalid response size or format: expected {len(extracted_logs)} items, got {len(validation_results) if isinstance(validation_results, list) else 'non-list'}")
+                err_msg = f"Invalid response size/format: expected {len(extracted_logs)} items, got {len(validation_results) if isinstance(validation_results, list) else 'non-list'}"
+                logger.error(f"OpenRouter returned: {err_msg}")
+                record_llm_validation(provider, False, err_msg)
         else:
-            logger.error(f"OpenRouter API returned status {response.status_code}: {response.text}")
+            err_msg = f"HTTP {response.status_code}: {response.text}"
+            logger.error(f"OpenRouter API returned status: {err_msg}")
+            record_llm_validation(provider, False, err_msg)
     except Exception as e:
-        logger.error(f"Error calling OpenRouter validator API: {e}")
+        provider = "Anthropic" if "anthropic" in model_name or "claude" in model_name.lower() else "OpenAI"
+        from backend.db_manager import record_llm_validation
+        err_msg = f"Connection/Parsing error: {e}"
+        logger.error(f"Error calling OpenRouter validator API: {err_msg}")
+        record_llm_validation(provider, False, err_msg)
         
     return None
 
@@ -508,6 +521,7 @@ You are a Log Verification Engine. Assume all logs are INVALID until proven othe
 """
 
     try:
+        from backend.db_manager import record_llm_validation
         client = OpenAI(api_key=api_key)
         response = client.chat.completions.create(
             model="gpt-4o-mini",
@@ -530,11 +544,17 @@ You are a Log Verification Engine. Assume all logs are INVALID until proven othe
                     "reason": f"{reason_prefix}: {val.get('reason', 'No reason provided')}"
                 }
                 updated_logs.append(log_copy)
+            record_llm_validation("OpenAI", True)
             return updated_logs
         else:
-            logger.error(f"OpenAI returned invalid response size or format: expected {len(extracted_logs)} items, got {len(validation_results) if isinstance(validation_results, list) else 'non-list'}")
+            err_msg = f"Invalid response size/format: expected {len(extracted_logs)} items, got {len(validation_results) if isinstance(validation_results, list) else 'non-list'}"
+            logger.error(f"OpenAI returned: {err_msg}")
+            record_llm_validation("OpenAI", False, err_msg)
     except Exception as e:
-        logger.error(f"Error calling OpenAI validator API: {e}")
+        from backend.db_manager import record_llm_validation
+        err_msg = f"Connection/Parsing error: {e}"
+        logger.error(f"Error calling OpenAI validator API: {err_msg}")
+        record_llm_validation("OpenAI", False, err_msg)
 
     return None
 
@@ -653,6 +673,7 @@ You are a Log Verification Engine. Assume all logs are INVALID until proven othe
             }
             
             try:
+                from backend.db_manager import record_llm_validation
                 response = requests.post("https://api.anthropic.com/v1/messages", json=payload, headers=headers, timeout=20)
                 if response.status_code == 200:
                     data = response.json()
@@ -675,12 +696,20 @@ You are a Log Verification Engine. Assume all logs are INVALID until proven othe
                             }
                             updated_logs.append(log_copy)
                         claude_success = True
+                        record_llm_validation("Anthropic", True)
                     else:
-                        logger.error(f"Claude returned invalid response size or format: expected {len(extracted_logs)} items, got {len(validation_results) if isinstance(validation_results, list) else 'non-list'}")
+                        err_msg = f"Invalid response size/format: expected {len(extracted_logs)} items, got {len(validation_results) if isinstance(validation_results, list) else 'non-list'}"
+                        logger.error(f"Claude returned: {err_msg}")
+                        record_llm_validation("Anthropic", False, err_msg)
                 else:
-                    logger.error(f"Anthropic API returned status {response.status_code}: {response.text}")
+                    err_msg = f"HTTP {response.status_code}: {response.text}"
+                    logger.error(f"Anthropic API returned status: {err_msg}")
+                    record_llm_validation("Anthropic", False, err_msg)
             except Exception as e:
-                logger.error(f"Error calling Claude validator API: {e}")
+                from backend.db_manager import record_llm_validation
+                err_msg = f"Connection/Parsing error: {e}"
+                logger.error(f"Error calling Claude validator API: {err_msg}")
+                record_llm_validation("Anthropic", False, err_msg)
 
     # Fallback to OpenAI if Claude is unconfigured or failed
     if not claude_success:

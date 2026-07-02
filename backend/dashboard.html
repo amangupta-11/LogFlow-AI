@@ -1491,15 +1491,25 @@
                             el.classList.add("badge-healthy");
                         } else if (statusLower === "warning") {
                             el.classList.add("badge-warning");
-                            criticalOrWarningReasons.push(`<strong>${elementId.replace('health-', '').toUpperCase()}</strong>: ${reason}`);
+                            criticalOrWarningReasons.push(`<strong>${elementId.replace('health-', '').toUpperCase()}</strong>:<br/>${reason.replace(/\n/g, '<br/>')}`);
+                        } else if (statusLower === "fallback validator active") {
+                            el.classList.add("badge-warning");
+                            criticalOrWarningReasons.push(`<strong>${elementId.replace('health-', '').toUpperCase()} (FALLBACK)</strong>:<br/>${reason.replace(/\n/g, '<br/>')}`);
                         } else if (statusLower === "critical") {
                             el.classList.add("badge-critical");
-                            criticalOrWarningReasons.push(`<strong>${elementId.replace('health-', '').toUpperCase()}</strong>: ${reason}`);
+                            criticalOrWarningReasons.push(`<strong>${elementId.replace('health-', '').toUpperCase()}</strong>:<br/>${reason.replace(/\n/g, '<br/>')}`);
                         } else if (statusLower === "unknown") {
                             el.classList.add("badge-warning");
-                            criticalOrWarningReasons.push(`<strong>${elementId.replace('health-', '').toUpperCase()}</strong>: ${reason}`);
+                            criticalOrWarningReasons.push(`<strong>${elementId.replace('health-', '').toUpperCase()}</strong>:<br/>${reason.replace(/\n/g, '<br/>')}`);
                         } else {
                             el.classList.add("badge-disabled");
+                        }
+
+                        if (elementId === "health-llm" && componentData.provider) {
+                            const labelEl = el.previousElementSibling;
+                            if (labelEl) {
+                                labelEl.textContent = `LLM API (${componentData.provider}):`;
+                            }
                         }
                     };
 

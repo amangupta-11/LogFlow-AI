@@ -2614,6 +2614,16 @@ def log_health_status(component, status, details):
     )
 
 
+def record_llm_validation(provider: str, success: bool, error_message: str = None):
+    import json
+    details_dict = {
+        "provider": provider,
+        "success": success,
+        "error_message": error_message or ""
+    }
+    log_health_status("llm_api", "healthy" if success else "unhealthy", json.dumps(details_dict))
+
+
 def is_agent_paused():
     rows = execute_repo_read("SELECT status FROM agent_status WHERE id = 1")
     if rows and rows[0]["status"] == "paused":
@@ -3006,42 +3016,201 @@ def check_search_providers_health():
     except Exception as e:
         return "Critical", f"Failed to check crawl history: {e}"
 
+def map_error_to_human_readable(err_msg: str) -> str:
+    if not err_msg:
+        return "None"
+    err_lower = err_msg.lower()
+    if "402" in err_lower or "insufficient_credits" in err_lower or "insufficient credits" in err_lower:
+        return "HTTP 402: Insufficient credits or billing limit reached."
+    if "401" in err_lower or "invalid api key" in err_lower or "api_key_invalid" in err_lower or "invalid_api_key" in err_lower:
+        return "HTTP 401: Invalid API key configuration."
+    if "429" in err_lower or "rate limit" in err_lower or "rate_limit_exceeded" in err_lower:
+        return "HTTP 429: Rate limit exceeded. Please check provider limits."
+    if "timeout" in err_lower:
+        return "Timeout: Connection to LLM API timed out."
+    if "500" in err_lower or "internal server error" in err_lower:
+        return "HTTP 500: Provider internal server error."
+    if "connection" in err_lower or "resolving" in err_lower:
+        return "Network Error: Failed to connect to LLM API provider."
+    return err_msg
+
 def check_llm_api_health():
+    from datetime import datetime, timedelta
+    import json
+    import os
+
     gemini_key = os.getenv("GEMINI_API_KEY")
     openai_key = os.getenv("OPENAI_API_KEY")
     anthropic_key = os.getenv("ANTHROPIC_API_KEY")
     
-    if not any([gemini_key, openai_key, anthropic_key]):
-        return "Critical", "Missing API key: GEMINI_API_KEY, OPENAI_API_KEY, and ANTHROPIC_API_KEY are not configured."
-        
+    gemini_configured = bool(gemini_key) and not gemini_key.startswith("sk-abcdef")
+    openai_configured = bool(openai_key) and not openai_key.startswith("sk-abcdef")
+    anthropic_configured = bool(anthropic_key) and not anthropic_key.startswith("sk-abcdef")
+    
+    configured_providers = []
+    if anthropic_configured:
+        configured_providers.append("Anthropic")
+    if openai_configured:
+        configured_providers.append("OpenAI")
+    if gemini_configured:
+        configured_providers.append("Gemini")
+
     try:
-        rows = execute_repo_read("SELECT validation_result FROM repository_discovery_history ORDER BY id DESC LIMIT 50")
-        total = 0
-        llm_success = 0
-        for r in rows:
-            reason = r.get("validation_result")
-            if not reason:
-                continue
-            total += 1
-            is_fallback = "Fallback" in reason or "Local Verification" in reason or "deterministic" in reason.lower()
-            is_llm = "Claude" in reason or "OpenAI" in reason or "Gemini" in reason
-            if is_llm and not is_fallback:
-                llm_success += 1
+        # Fetch last 50 validation records for 'llm_api' component
+        rows = execute_repo_read(
+            "SELECT timestamp, status, details FROM agent_health_history WHERE component = 'llm_api' ORDER BY id DESC LIMIT 50"
+        )
         
-        if total > 0:
-            rate = (llm_success / total) * 100.0
-            rate_str = f"Validation success rate: {rate:.1f}% ({llm_success}/{total})"
-            if rate >= 95.0:
-                return "Healthy", rate_str
-            elif rate >= 70.0:
-                return "Warning", f"{rate_str} - falling back to offline validation"
+        # Filter attempts within the last 24 hours
+        now = datetime.utcnow()
+        twenty_four_hours_ago = now - timedelta(hours=24)
+        
+        valid_attempts = []
+        for row in rows:
+            ts_str = row.get("timestamp")
+            if ts_str:
+                try:
+                    ts_clean = ts_str.replace("Z", "")
+                    if "." in ts_clean:
+                        ts_clean = ts_clean.split(".")[0]
+                    ts = datetime.fromisoformat(ts_clean)
+                    if ts >= twenty_four_hours_ago:
+                        valid_attempts.append(row)
+                except Exception:
+                    pass
+        
+        # Determine the active provider
+        active_provider = None
+        
+        # 1. Most recent successful validation in the rolling window
+        for attempt in valid_attempts:
+            details_str = attempt.get("details", "")
+            try:
+                details = json.loads(details_str)
+                if details.get("success") and details.get("provider") in configured_providers:
+                    active_provider = details.get("provider")
+                    break
+            except Exception:
+                pass
+                
+        # 2. Most recent attempt in the rolling window
+        if not active_provider:
+            for attempt in valid_attempts:
+                details_str = attempt.get("details", "")
+                try:
+                    details = json.loads(details_str)
+                    if details.get("provider") in configured_providers:
+                        active_provider = details.get("provider")
+                        break
+                except Exception:
+                    pass
+                    
+        # 3. Fallback to default priority of configured providers
+        if not active_provider:
+            if anthropic_configured:
+                active_provider = "Anthropic"
+            elif openai_configured:
+                active_provider = "OpenAI"
+            elif gemini_configured:
+                active_provider = "Gemini"
             else:
-                return "Critical", f"{rate_str} - LLM API errors (HTTP 402/insufficient credits)"
+                active_provider = "None"
+
+        # Calculate success rate for the active provider in the rolling window
+        active_attempts = []
+        for attempt in valid_attempts:
+            details_str = attempt.get("details", "")
+            try:
+                details = json.loads(details_str)
+                if details.get("provider") == active_provider:
+                    active_attempts.append(details)
+            except Exception:
+                pass
+
+        total_count = len(active_attempts)
+        if total_count > 0:
+            success_count = sum(1 for a in active_attempts if a.get("success"))
+            success_rate = (success_count / total_count) * 100.0
         else:
-            return "Healthy", "No validation logs recorded yet. API keys loaded successfully."
-            
+            success_count = 0
+            success_rate = 100.0 if active_provider != "None" else 0.0
+
+        # Last successful validation timestamp
+        last_success_time = "Never"
+        for attempt in valid_attempts:
+            details_str = attempt.get("details", "")
+            try:
+                details = json.loads(details_str)
+                if details.get("provider") == active_provider and details.get("success"):
+                    last_success_time = attempt.get("timestamp")
+                    break
+            except Exception:
+                pass
+
+        # Last failure reason
+        last_failure_reason = "None"
+        for attempt in valid_attempts:
+            details_str = attempt.get("details", "")
+            try:
+                details = json.loads(details_str)
+                if details.get("provider") == active_provider and not details.get("success"):
+                    last_failure_reason = map_error_to_human_readable(details.get("error_message"))
+                    break
+            except Exception:
+                pass
+
+        # Determine Fallback Status
+        fallback_status = "None"
+        if active_provider == "None":
+            fallback_status = "Active (No LLM keys configured; using Regex/Deterministic validation)"
+        elif success_rate < 70.0:
+            other_succeeded = False
+            other_provider = None
+            for p in ["Anthropic", "OpenAI"]:
+                if p != active_provider and p in configured_providers:
+                    # Check if p has success in rolling window
+                    for attempt in valid_attempts:
+                        details_str = attempt.get("details", "")
+                        try:
+                            details = json.loads(details_str)
+                            if details.get("provider") == p and details.get("success"):
+                                other_succeeded = True
+                                other_provider = p
+                                break
+                        except Exception:
+                            pass
+                    if other_succeeded:
+                        break
+            if other_succeeded:
+                fallback_status = f"Fell back to {other_provider} successfully"
+            else:
+                fallback_status = "Fell back to Regex/Deterministic validation"
+
+        # Determine overall LLM status
+        if active_provider == "None":
+            status = "Fallback Validator Active"
+        else:
+            if success_rate >= 95.0:
+                status = "Healthy"
+            elif success_rate >= 70.0:
+                status = "Warning"
+            else:
+                status = "Fallback Validator Active"
+
+        rate_str = f"{success_rate:.1f}% ({success_count}/{total_count})" if total_count > 0 else "100.0% (No attempts yet)"
+        
+        reason = (
+            f"Active Provider: {active_provider}\n"
+            f"Status: {status}\n"
+            f"Success Rate: {rate_str}\n"
+            f"Last Successful Validation: {last_success_time}\n"
+            f"Last Failure Reason: {last_failure_reason}\n"
+            f"Fallback Status: {fallback_status}"
+        )
+        return status, reason, active_provider
+
     except Exception as e:
-        return "Unknown", f"UNKNOWN - Health check query failed: {e}"
+        return "Unknown", f"UNKNOWN - Health check query failed: {e}", "None"
 
 def check_smtp_health():
     smtp_host = os.getenv("SMTP_HOST")
@@ -3086,8 +3255,8 @@ def evaluate_overall_health(statuses):
         return "Critical", "One or more system components are in a critical state."
     if "Unknown" in statuses:
         return "Warning", "One or more component statuses are unknown due to query failures."
-    if "Warning" in statuses:
-        return "Warning", "System components are reporting warnings."
+    if "Warning" in statuses or "Fallback Validator Active" in statuses:
+        return "Warning", "System components are reporting warnings or running in fallback validation mode."
     if "Healthy" in statuses:
         return "Healthy", "All configured components are operating normally."
     return "Disabled", "No components configured."
@@ -3096,7 +3265,7 @@ def get_repository_health_statuses():
     pg_status, pg_reason = check_postgres_health()
     sched_status, sched_reason = check_scheduler_health()
     search_status, search_reason = check_search_providers_health()
-    llm_status, llm_reason = check_llm_api_health()
+    llm_status, llm_reason, llm_provider = check_llm_api_health()
     smtp_status, smtp_reason = check_smtp_health()
     vector_status, vector_reason = check_vector_store_health()
     
@@ -3106,7 +3275,7 @@ def get_repository_health_statuses():
         "postgres": {"status": pg_status, "reason": pg_reason},
         "scheduler": {"status": sched_status, "reason": sched_reason},
         "search_providers": {"status": search_status, "reason": search_reason},
-        "llm_api": {"status": llm_status, "reason": llm_reason},
+        "llm_api": {"status": llm_status, "reason": llm_reason, "provider": llm_provider},
         "smtp": {"status": smtp_status, "reason": smtp_reason},
         "vector_store": {"status": vector_status, "reason": vector_reason},
         "overall": {"status": overall_status, "reason": overall_reason}
